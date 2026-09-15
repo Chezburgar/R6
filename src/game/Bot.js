@@ -34,7 +34,7 @@ export class Bot {
   }
 
   // ---------- lifecycle ----------
-  spawn(pos, yaw) { this.char.reset(pos, yaw); this.aimYaw = yaw; this.aimPitch = 0; this.vel.set(0, 0, 0); this.state = 'idle'; this.path = null; this.goal = null; this.target = null; this.plan = []; this.planIdx = 0; this.holdSpot = null; this.stateT = 0; this.reviveTarget = null; this.thermiteWall = null; this.char.setVisible(true); }
+  spawn(pos, yaw) { this.rallyDone = false; this.rallyT = 0; this.char.reset(pos, yaw); this.aimYaw = yaw; this.aimPitch = 0; this.vel.set(0, 0, 0); this.state = 'idle'; this.path = null; this.goal = null; this.target = null; this.plan = []; this.planIdx = 0; this.holdSpot = null; this.stateT = 0; this.reviveTarget = null; this.thermiteWall = null; this.char.setVisible(true); }
   get alive() { return this.char.alive && !this.char.dead; }
 
   update(dt) {
@@ -348,6 +348,13 @@ export class Bot {
     // approach: staged waypoints then site
     if (P.stage < P.route.length) {
       const wp = P.route[P.stage];
+      // rally before the final push: wait (up to 12 s) for a teammate to be close unless time is short
+      if (P.stage === P.route.length - 1 && M.timeLeft > 60 && !this.rallyDone) {
+        const near = g.characters.filter(c => c.side === 'atk' && !c.dead && !c.dbno && c !== C && c.pos.distanceTo(C.pos) < 9).length;
+        const atSite = g.characters.some(c => c.side === 'atk' && !c.dead && c !== C && c.pos.distanceTo(site.center) < 8);
+        if (near === 0 && !atSite && this.rallyT < 12) { this.rallyT = (this.rallyT || 0) + dt; this.stop(); this.state = 'rally'; C.stance = Stance.CROUCH; return; }
+        this.rallyDone = true; C.stance = Stance.STAND;
+      }
       if (C.pos.distanceTo(wp) < 1.6) { P.stage++; this.stateT = 0; }
       else { this.moveTo(wp, 1.2); this.state = 'move'; if (this.stateT > 25) { P.stage++; this.stateT = 0; } }
       return;
@@ -378,7 +385,7 @@ export class Bot {
     // secondary: frag/stun into the site when close
     if (C.gadget2 && C.gadget2Uses < SecondaryGadgets[C.gadget2].uses && (C.gadget2 === 'frag' || C.gadget2 === 'stun' || C.gadget2 === 'smoke')) {
       const d = C.pos.distanceTo(site.center);
-      if (d < 12 && d > 5 && this.stateT > 3 && Math.random() < 0.01) { const eye = C.eyePos(new THREE.Vector3()); const dir = site.center.clone().add(new THREE.Vector3(0, 1.0, 0)).sub(eye).normalize(); dir.y += 0.25; dir.normalize(); if (g.world.visible(eye, eye.clone().addScaledVector(dir, 3))) { g.gadgets.throwGrenade(C.gadget2, C, eye, dir, 0.9); C.gadget2Uses++; this.gadgetT = 5; } }
+      if (d < 14 && d > 5 && this.stateT > 2 && Math.random() < 0.03) { const eye = C.eyePos(new THREE.Vector3()); const dir = site.center.clone().add(new THREE.Vector3(0, 1.0, 0)).sub(eye).normalize(); dir.y += 0.25; dir.normalize(); if (g.world.visible(eye, eye.clone().addScaledVector(dir, 3))) { g.gadgets.throwGrenade(C.gadget2, C, eye, dir, 0.9); C.gadget2Uses++; this.gadgetT = 5; } }
     }
   }
 }

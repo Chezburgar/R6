@@ -130,7 +130,12 @@ export class NavGrid {
         if (!m.walkable) continue;
         const dy = m.y - n.y;
         if (dy > STEP) continue;
-        if (dy < -STEP) { if (dy < -3.6 || (dx && dz)) continue; out.push({ n: m, cost: 2.5 + Math.abs(dy), drop: true }); continue; }
+        if (dy < -STEP) {
+          // a real drop only exists where the neighbour cell has no floor at our height (hatch hole, ledge, stairwell)
+          if (dy < -3.6 || (dx && dz)) continue;
+          if (nodes.some(q => Math.abs(q.y - n.y) < 0.5)) continue;
+          out.push({ n: m, cost: 2.5 + Math.abs(dy), drop: true }); continue;
+        }
         if (dx && dz) {
           // no corner cutting: both orthogonal neighbours must be walkable at similar height and open toward m
           const a = this.cells[this.idx(n.ix + dx, n.iz)], b = this.cells[this.idx(n.ix, n.iz + dz)];

@@ -176,6 +176,9 @@ export class DefensePlan {
     // barricade slots belonging to site rooms
     this.slots = L.barricadeSlots.filter(s => rooms.some(r => Math.abs(s.floor - r.floor) < 0.5 && s.x >= r.min.x - 0.3 && s.x <= r.max.x + 0.3 && s.z >= r.min.z - 0.3 && s.z <= r.max.z + 0.3));
     this.doorSlots = this.slots.filter(s => s.kind === 'door'); this.windowSlots = this.slots.filter(s => s.kind === 'window');
+    // leave the door between the two site rooms (and one interior door) open so defenders can rotate
+    for (const s of this.doorSlots) { const inBoth = rooms.every(r => s.x >= r.min.x - 0.3 && s.x <= r.max.x + 0.3 && s.z >= r.min.z - 0.3 && s.z <= r.max.z + 0.3); if (inBoth) s._keepOpen = true; }
+    const interior = this.doorSlots.filter(s => !s.exterior && !s._keepOpen); if (interior.length) interior[interior.length - 1]._keepOpen = true;
     this.wallIdx = 0; this.slotIdx = 0; this.holdIdx = 0;
     // hold spots: room corners
     this.holds = [];
@@ -193,7 +196,7 @@ export class DefensePlan {
     };
     const perBot = Math.ceil(this.walls.length / 4);
     for (let k = 0; k < perBot && this.wallIdx < this.walls.length; k++) { const w = this.walls[this.wallIdx++]; tasks.push({ type: 'reinforce', wall: w, pos: inside(w) }); }
-    const nearSlots = this.slots.filter(s => !s.barricade.alive() && !s._taken).sort((a, b) => Math.hypot(a.x - C.pos.x, a.z - C.pos.z) - Math.hypot(b.x - C.pos.x, b.z - C.pos.z)).slice(0, 3);
+    const nearSlots = this.slots.filter(s => !s.barricade.alive() && !s._taken && !s._keepOpen).sort((a, b) => Math.hypot(a.x - C.pos.x, a.z - C.pos.z) - Math.hypot(b.x - C.pos.x, b.z - C.pos.z)).slice(0, 3);
     for (const s of nearSlots) { s._taken = true; const room = this.site.rooms.find(r => s.x >= r.min.x - 0.3 && s.x <= r.max.x + 0.3 && s.z >= r.min.z - 0.3 && s.z <= r.max.z + 0.3) || this.site.rooms[0]; const dir = room.center.clone().sub(new THREE.Vector3(s.x, s.y, s.z)); dir.y = 0; dir.normalize(); const p = new THREE.Vector3(s.x, s.y, s.z).addScaledVector(dir, 0.9); tasks.push({ type: 'barricade', slot: s, pos: p }); }
     // unique gadgets
     const r0 = this.site.rooms[0];

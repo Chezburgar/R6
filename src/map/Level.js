@@ -320,9 +320,13 @@ export class Level {
       const col = this.world.add(new Collider(new THREE.Vector3(cx - gw / 2 - 0.01, y, cz - gd / 2 - 0.01), new THREE.Vector3(cx + gw / 2 + 0.01, y + o.h, cz + gd / 2 + 0.01), { material: 'glass', penetrable: true, penMult: 0.97, blocksVision: false, tag: 'glass', floor, solid: true, blocksNav: false }));
       const pane = { mesh: m, col, broken: false, center: new THREE.Vector3(cx, y + o.h / 2, cz), horizontal };
       col.owner = pane; this.glass.push(pane); slot.glass = pane;
-      // window frame + sill
+      // window frame + sill + cross mullions (non-colliding)
       const fw = horizontal ? o.w + 0.1 : t + 0.04, fd = horizontal ? t + 0.04 : o.w + 0.1;
       this.box([cx - fw / 2, y - 0.06, cz - fd / 2], [cx + fw / 2, y, cz + fd / 2], 'plank', { uvScale: 1, floor, tag: 'sill' });
+      const mw = horizontal ? 0.04 : 0.06, md = horizontal ? 0.06 : 0.04;
+      this.box([cx - mw / 2, y, cz - md / 2], [cx + mw / 2, y + o.h, cz + md / 2], 'plank', { uvScale: 1, collide: false });
+      const hw2 = horizontal ? o.w / 2 : 0.03, hd2 = horizontal ? 0.03 : o.w / 2;
+      this.box([cx - hw2, y + o.h * 0.55 - 0.02, cz - hd2], [cx + hw2, y + o.h * 0.55 + 0.02, cz + hd2], 'plank', { uvScale: 1, collide: false });
     }
     if (o.kind !== 'garage' && o.kind !== 'arch') { slot.barricade = new Barricade(this, slot); this.barricadeSlots.push(slot); }
     // door frame trim
