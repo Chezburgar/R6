@@ -254,7 +254,7 @@ function props(L) {
   // Lobby
   pillar(13, 4); pillar(17, 4);
   P([11.5, 0, 6.2], [14.5, 0.9, 6.9], wood); // reception desk
-  P([15.5, 0, 6.3], [16.1, 1.9, 6.7], metal, { material: flat(0x1f2a3a, 0.4, 0.5, { emissive: new THREE.Color(0x35a0ff), emissiveIntensity: 0.6 }), matVariant: 'kiosk' });
+  P([15.5, 0, 6.3], [16.1, 1.9, 6.7], metal, { material: flat(0x14181e, 0.35, 0.6, { emissive: new THREE.Color(0x2a6cff), emissiveIntensity: 0.12 }), matVariant: 'kiosk' });
   P([10.6, 0.4, 1.0], [12.6, 0.85, 2.0], 'fabric'); P([17.4, 0.4, 1.0], [19.4, 0.85, 2.0], 'fabric');  // sofas
   P([10.6, 0, 1.0], [12.6, 0.4, 2.0], 'fabric', { visible: false }); P([17.4, 0, 1.0], [19.4, 0.4, 2.0], 'fabric', { visible: false });
   painting(11.5, 1.4, 7.62, 2.4, 1.0, 'z');

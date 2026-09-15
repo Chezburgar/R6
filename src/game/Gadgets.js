@@ -84,7 +84,8 @@ class Grenade extends Entity {
 
 // ---------- placeables ----------
 class Placed extends Entity {
-  constructor(mgr, type, owner, pos, normal) { super(mgr, type, owner); this.pos.copy(pos); this.normal = normal ? normal.clone() : new THREE.Vector3(0, 1, 0); this.build(); }
+  // `pre` fields are assigned before build() so subclasses can rely on them in build()
+  constructor(mgr, type, owner, pos, normal, pre = null) { super(mgr, type, owner); this.pos.copy(pos); this.normal = normal ? normal.clone() : new THREE.Vector3(0, 1, 0); if (pre) Object.assign(this, pre); this.build(); }
   build() {}
 }
 
@@ -160,7 +161,7 @@ class DeployableShield extends Placed {
 }
 
 class ThermiteCharge extends Placed {
-  constructor(mgr, type, owner, pos, normal, wall, hatch) { super(mgr, type, owner, pos, normal); this.wall = wall; this.hatch = hatch; this.burning = false; this.burnT = 0; this.armed = true; }
+  constructor(mgr, type, owner, pos, normal, wall, hatch) { super(mgr, type, owner, pos, normal, { wall, hatch }); this.burning = false; this.burnT = 0; this.armed = true; }
   build() {
     const m = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.05), new THREE.MeshStandardMaterial({ color: 0x3a3d42, roughness: 0.5, metalness: 0.6 }));
     m.position.copy(this.pos).addScaledVector(this.normal, 0.03); m.lookAt(m.position.clone().add(this.normal)); this.mesh = m; this.game.scene.add(m);
@@ -209,7 +210,7 @@ class WelcomeMat extends Placed {
 }
 
 class EDD extends Placed {
-  constructor(mgr, type, owner, pos, normal, slot) { super(mgr, type, owner, pos, normal); this.slot = slot; }
+  constructor(mgr, type, owner, pos, normal, slot) { super(mgr, type, owner, pos, normal, { slot }); }
   build() {
     const s = this.slot; const m = new THREE.Group();
     const box = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.06), new THREE.MeshStandardMaterial({ color: 0x3b3f2a, roughness: 0.6 })); m.add(box);
@@ -246,7 +247,7 @@ class SignalDisruptor extends Placed {
 }
 
 class ShockWire extends Placed {
-  constructor(mgr, type, owner, pos, normal, target) { super(mgr, type, owner, pos, normal); this.target = target; if (target.wall) target.wall.electrified++; if (target.hatch) target.hatch.electrified = true; if (target.entity) target.entity.electrified = true; }
+  constructor(mgr, type, owner, pos, normal, target) { super(mgr, type, owner, pos, normal, { target }); if (target.wall) target.wall.electrified++; if (target.hatch) target.hatch.electrified = true; if (target.entity) target.entity.electrified = true; }
   build() {
     const m = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.24, 0.1), new THREE.MeshStandardMaterial({ color: 0x1a1d22, roughness: 0.5, metalness: 0.6 }));
     m.position.copy(this.pos).addScaledVector(this.normal, 0.06); m.lookAt(m.position.clone().add(this.normal)); this.mesh = m; this.game.scene.add(m);
