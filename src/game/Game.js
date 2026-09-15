@@ -106,7 +106,7 @@ export class Game {
 
   // ---------- level lifecycle ----------
   resetLevel() {
-    if (this.level) { this.scene.remove(this.level.group); this.scene.remove(this.level.dynamicGroup); this.scene.remove(this.level.decalInst); this.scene.remove(this.level.scorchInst); this.scene.remove(this.level.bloodInst); for (const l of this.level.lights) this.scene.remove(l); this.level.group.traverse(o => { if (o.isMesh) o.geometry.dispose(); }); }
+    if (this.level) { this.scene.remove(this.level.group); this.scene.remove(this.level.dynamicGroup); this.scene.remove(this.level.decalInst); this.scene.remove(this.level.scorchInst); this.scene.remove(this.level.bloodInst); for (const l of this.level.lights) this.scene.remove(l); this.level.group.traverse(o => { if (o.isMesh) o.geometry.dispose(); }); this.level.dynamicGroup.traverse(o => { if (o.isMesh) o.geometry.dispose(); }); }
     this.world = new World(2);
     this.level = buildBorder(this.world, this.scene);
     this.level.onCellDestroyed = (wall, cell) => { this.effects.wallDebris(cell.center, wall.normal, 'drywall'); };

@@ -376,6 +376,27 @@ class AudioEngineClass {
   }
   stopAmbience() { if (this._ambient && this.ctx) { const t = this.ctx.currentTime; this._ambient.windGain.gain.setTargetAtTime(0, t, 0.3); this._ambient.humGain.gain.setTargetAtTime(0, t, 0.3); this._ambient.roomGain.gain.setTargetAtTime(0, t, 0.3); } }
 
+  // Menu theme: slow minor pad with a filtered pulse — evocative of the Siege front-end ambience.
+  menuMusic(on) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    if (!on) { if (this._music) { this._music.gain.gain.setTargetAtTime(0, t, 1.2); const m = this._music; this._music = null; setTimeout(() => { try { m.nodes.forEach(n => n.stop()); } catch (e) {} }, 4000); } return; }
+    if (this._music) return;
+    const gain = ctx.createGain(); gain.gain.value = 0; gain.connect(this.master);
+    const lp = this._filter('lowpass', 900, 0.8); lp.connect(gain);
+    const rev = ctx.createGain(); rev.gain.value = 0.35; lp.connect(rev); rev.connect(this.revHall);
+    const nodes = [];
+    const chord = [55, 65.41, 82.41, 110, 130.81, 164.81]; // A minor spread
+    for (let i = 0; i < chord.length; i++) {
+      for (const det of [-4, 4]) { const o = ctx.createOscillator(); o.type = i < 2 ? 'sawtooth' : 'triangle'; o.frequency.value = chord[i]; o.detune.value = det; const g = ctx.createGain(); g.gain.value = i < 2 ? 0.05 : 0.03; o.connect(g); g.connect(lp); o.start(); nodes.push(o); }
+    }
+    // slow filter sweep + pulse
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.045; const lg = ctx.createGain(); lg.gain.value = 500; lfo.connect(lg); lg.connect(lp.frequency); lfo.start(); nodes.push(lfo);
+    const pulse = ctx.createOscillator(); pulse.type = 'sine'; pulse.frequency.value = 220; const pg = ctx.createGain(); pg.gain.value = 0; pulse.connect(pg); pg.connect(lp); pulse.start(); nodes.push(pulse);
+    const plfo = ctx.createOscillator(); plfo.frequency.value = 0.5; const plg = ctx.createGain(); plg.gain.value = 0.02; plfo.connect(plg); plg.connect(pg.gain); plfo.start(); nodes.push(plfo);
+    gain.gain.setTargetAtTime(0.5, t, 2.5);
+    this._music = { gain, nodes };
+  }
   bombTick(pos, urgency) { this.beep(pos, 1400 + urgency * 600, 0.05, 0.5); }
   roundStinger(win) {
     if (!this.ready) return; const ctx = this.ctx; const t0 = ctx.currentTime;

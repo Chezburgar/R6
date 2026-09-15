@@ -53,7 +53,7 @@ class App {
     this.opSelect = new OperatorSelect(this, this.uiRoot, this.menu);
     const boot = document.getElementById('boot');
     const btn = document.createElement('button'); btn.className = 'btn primary start'; btn.textContent = 'PRESS TO START'; boot.querySelector('.boot-inner').appendChild(btn); boot.classList.add('ready');
-    const start = () => { AudioEngine.init(); this.applyAudioSettings(); AudioEngine.click('ui'); boot.classList.add('out'); setTimeout(() => boot.remove(), 700); this.mode = 'menu'; this.menu.showPage('home'); };
+    const start = () => { AudioEngine.init(); this.applyAudioSettings(); AudioEngine.click('ui'); AudioEngine.menuMusic(true); boot.classList.add('out'); setTimeout(() => boot.remove(), 700); this.mode = 'menu'; this.menu.showPage('home'); };
     btn.addEventListener('click', start);
     window.addEventListener('keydown', function once(e) { if (e.code === 'Enter' || e.code === 'Space') { window.removeEventListener('keydown', once); start(); } });
     this.resize();
@@ -68,7 +68,7 @@ class App {
   startMatch() {
     const gs = this.settings.game;
     if (this.game) { this.game.dispose(); this.game = null; }
-    this.menu.hide();
+    this.menu.hide(); AudioEngine.menuMusic(false);
     this.game = new Game(this, this.settings, gs);
     this.game.resize(window.innerWidth, window.innerHeight);
     this.mode = 'game';
@@ -104,7 +104,7 @@ class App {
     Input.unlock(); Input.wantLock = false;
     this.overlay(playerWon ? 'VICTORY' : 'DEFEAT', `<div class="grid"><div><div class="label">FINAL SCORE</div><div class="value">${M.score.A} — ${M.score.B}</div></div><div><div class="label">KILLS / DEATHS</div><div class="value">${stats.kills} / ${stats.deaths}</div></div><div><div class="label">HEADSHOTS</div><div class="value">${stats.headshots}</div></div><div><div class="label">RENOWN EARNED</div><div class="value">+${250 + stats.kills * 40 + (playerWon ? 300 : 0)}</div></div></div>`, [{ label: 'RETURN TO MENU', primary: true, fn: () => this.leaveMatch() }]);
   }
-  leaveMatch() { if (this.game) { this.game.dispose(); this.game = null; } Input.unlock(); Input.wantLock = false; this.mode = 'menu'; this.menu.showPage('home'); }
+  leaveMatch() { if (this.game) { this.game.dispose(); this.game = null; } Input.unlock(); Input.wantLock = false; this.mode = 'menu'; this.menu.showPage('home'); AudioEngine.menuMusic(true); }
 
   // ---------- pause / overlays ----------
   onEscape() {

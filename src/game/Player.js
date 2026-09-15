@@ -479,6 +479,7 @@ export class Player {
     // reload / switch / melee lowering
     let lower = 0; if (w.reloading) lower = 0.5 + 0.5 * Math.sin(Math.min(1, w.reloadTimer / Math.max(0.1, w.reloadTotal)) * Math.PI); if (this.switchT > 0) lower = 1; if (this.melee > 0) lower = 0.8;
     if (C.dbno) lower = 1;
+    if (this.gadgetMode || this.gadget2Mode) lower = Math.max(lower, 0.85);   // gadget in hand: weapon slung low
     this.lowerBlend = THREE.MathUtils.damp(this.lowerBlend, lower, 12, dt);
     const a = this.adsBlend * (1 - this.sprintBlend);
     const pos = hip.clone().lerp(adsPos, smooth(a));
