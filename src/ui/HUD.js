@@ -31,7 +31,9 @@ export class HUD {
       <div class="hud-center"><div class="hud-prompt" id="hud-prompt" style="display:none"></div><div class="hud-progress" id="hud-progress" style="display:none"><i id="hud-progress-fill"></i></div><div class="hud-progress-label" id="hud-progress-label"></div></div>
       <div class="hud-big" id="hud-big" style="display:none"></div>
       <div class="hud-dbno" id="hud-dbno" style="display:none"><div class="t">DOWNED</div><div class="s">WAIT FOR A TEAMMATE TO REVIVE YOU</div></div>
-      <div class="hud-drone" id="hud-drone"><div class="frame"></div><div class="noise"></div><div class="label">DRONE CAM</div><div class="bat" id="hud-drone-bat">X — RETURN TO OPERATOR</div></div>
+      <div class="hud-drone" id="hud-drone"><div class="frame"></div><div class="noise"></div><div class="label">DRONE CAM<small id="hud-drone-sub">SIGNAL OK</small></div><div class="bat" id="hud-drone-bat"></div>
+        <div class="reticle" id="hud-drone-ret"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="22" class="ring"/><circle cx="32" cy="32" r="22" class="prog" id="hud-drone-prog"/><circle cx="32" cy="32" r="2" class="dot"/></svg><div class="hint" id="hud-drone-hint"></div></div>
+        <div class="jam" id="hud-drone-jam">SIGNAL JAMMED</div></div>
       <div id="scoreboard"></div>
     `;
     this.$ = id => h.querySelector('#' + id);
@@ -72,6 +74,15 @@ export class HUD {
   }
   stun(intensity) { const s = this.$('hud-stun'); s.style.transition = 'none'; s.style.opacity = Math.min(1, intensity * 1.2); requestAnimationFrame(() => { s.style.transition = `opacity ${1.5 + intensity * 3}s ease-in`; s.style.opacity = 0; }); }
   drone(on) { this.$('hud-drone').classList.toggle('on', on); this.$('hud-cross').style.opacity = on ? 0 : 1; }
+  _droneHud() {
+    const g = this.game; const P = g.player; const d = P.drone; const M = g.match; if (!d) return;
+    const prog = this.$('hud-drone-prog'); const C = 2 * Math.PI * 22; prog.style.strokeDasharray = C; prog.style.strokeDashoffset = C * (1 - d.scanFrac);
+    const ret = this.$('hud-drone-ret'); ret.classList.toggle('hover', !!d.hover); ret.classList.toggle('scanning', d.scanT > 0.05);
+    this.$('hud-drone-hint').textContent = d.jammed ? '' : d.hover ? (d.scanT > 0.05 ? 'IDENTIFYING' : 'HOLD X — IDENTIFY') : '';
+    this.$('hud-drone-jam').style.opacity = d.jammed ? 1 : 0;
+    this.$('hud-drone-sub').textContent = d.jammed ? 'NO SIGNAL' : 'SIGNAL OK · DRONES ' + P.dronesLeft;
+    this.$('hud-drone-bat').textContent = (M.phase === 'prep' ? 'PREPARATION — LOCATE THE OBJECTIVE' : '5 — RETURN TO OPERATOR') + ' · Z — PING · SPACE — JUMP';
+  }
   dbno(on) { this.$('hud-dbno').style.display = on ? 'block' : 'none'; }
   gadgetSlot(slot) { this.equippedSlot = slot; this.refreshGadgets(); }
 
@@ -122,13 +133,14 @@ export class HUD {
     // damage indicators
     for (let i = this.dmgInds.length - 1; i >= 0; i--) { const d = this.dmgInds[i]; d.t -= dt; if (d.t <= 0) { d.el.remove(); this.dmgInds.splice(i, 1); continue; } const dx = d.pos.x - C.pos.x, dz = d.pos.z - C.pos.z; const ang = Math.atan2(dx, -dz) - (-C.yaw); d.el.style.transform = `rotate(${-ang * 180 / Math.PI}deg)`; d.el.style.opacity = Math.min(1, d.t); }
     this.dbno(C.dbno && !C.dead);
+    if (P.usingDrone) this._droneHud();
     this._markers();
     if (this.scoreboardOn) this._scoreboard();
   }
 
   // ---------- world markers ----------
   _markers() {
-    const g = this.game; const M = g.match; const cam = g.camera; const root = this.$('hud-markers'); const C = g.player.char;
+    const g = this.game; const M = g.match; const cam = g.camera; const root = this.$('hud-markers'); const P = g.player; const C = P.char; const eye = cam.position;
     const W = window.innerWidth, H = window.innerHeight; const used = new Set();
     const place = (key, cls, worldPos, label, dist, force = false) => {
       let m = this.markers.get(key); if (!m) { m = el('div', 'hud-marker ' + cls); m.innerHTML = `<div class="ic" data-l="${label && label.length === 1 ? label : ''}"></div><div class="l"></div><div class="d"></div>`; root.appendChild(m); this.markers.set(key, m); }
@@ -141,14 +153,18 @@ export class HUD {
       m.style.opacity = dist > 40 ? 0.5 : 1; used.add(key);
     };
     if (M.site && (M.phase === 'action' || M.phase === 'prep' || M.phase === 'planted')) {
-      if (!(M.phase === 'planted')) for (const b of M.site.bombs) { const p = b.pos.clone(); p.y += 1.0; place('site' + b.label, 'site', p, b.label, p.distanceTo(C.pos), M.phase === 'action'); }
-      if (M.defuser) { const p = M.defuser.pos.clone(); p.y += 0.6; place('defuser', 'defuser', p, 'DEFUSER', p.distanceTo(C.pos), true); }
-      if (M.defuserDropped && C.side === 'atk') { const p = M.defuserDropped.pos.clone(); p.y += 0.6; place('defuserD', 'defuser', p, 'DEFUSER', p.distanceTo(C.pos), true); }
+      if (!(M.phase === 'planted')) for (const b of M.site.bombs) { const p = b.pos.clone(); p.y += 1.0; place('site' + b.label, 'site', p, b.label, p.distanceTo(eye), M.phase === 'action'); }
+      if (M.defuser) { const p = M.defuser.pos.clone(); p.y += 0.6; place('defuser', 'defuser', p, 'DEFUSER', p.distanceTo(eye), true); }
+      if (M.defuserDropped && C.side === 'atk') { const p = M.defuserDropped.pos.clone(); p.y += 0.6; place('defuserD', 'defuser', p, 'DEFUSER', p.distanceTo(eye), true); }
     }
+    // contextual pings
+    g.pings.forEach((pg, i) => { place('ping' + i, pg.kind === 'enemy' ? 'enemyping' : 'ping', pg.pos, pg.label, pg.pos.distanceTo(eye), true); });
+    // the player's own drone when viewing from the operator
+    if (P.drone && !P.usingDrone && P.side === 'atk') { const p = P.drone.pos.clone(); p.y += 0.4; place('mydrone', 'drone', p, 'DRONE', p.distanceTo(eye), false); }
     for (const ch of g.characters) {
       if (ch === C || ch.dead) continue;
       if (ch.side === C.side) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('ally' + ch.op.id, 'ally ' + ch.side + (ch.dbno ? ' dbno' : ''), p, ch.name + (ch.dbno ? ' — DOWNED' : ''), undefined, false); }
-      else if (ch.pingedUntil > g.time || (ch.scanned > g.time)) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('enemy' + ch.op.id, 'scan', p, ch.name, p.distanceTo(C.pos), true); }
+      else if (ch.pingedUntil > g.time || (ch.scanned > g.time)) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('enemy' + ch.op.id, 'scan', p, ch.name, p.distanceTo(eye), true); }
     }
     for (const [k, m] of this.markers) if (!used.has(k)) m.style.display = 'none';
   }

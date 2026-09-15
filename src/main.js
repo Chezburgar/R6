@@ -32,7 +32,8 @@ class App {
     window.addEventListener('resize', () => this.resize());
     Input.attach(this.canvas);
     Input.onLockChange = (locked) => { if (!locked && this.game && this.mode === 'game' && !this.game.over && this.game.match.phase !== 'opselect' && this.game.match.phase !== 'roundEnd' && this.game.match.phase !== 'matchEnd') this.pause(true); };
-    window.addEventListener('keydown', e => { if (e.code === 'Escape') this.onEscape(); });
+    // Chrome swallows the Escape keydown that exits pointer lock, other browsers deliver both: only act once
+    window.addEventListener('keydown', e => { if (e.code === 'Escape' && performance.now() - Input.lastLockChange > 150) this.onEscape(); });
   }
   loadSettings() { try { const s = JSON.parse(localStorage.getItem('r6.settings') || '{}'); return { ...DEFAULTS, ...s, game: { ...DEFAULTS.game, ...(s.game || {}) }, career: { ...DEFAULTS.career, ...(s.career || {}) } }; } catch (e) { return { ...DEFAULTS }; } }
   saveSettings() { try { localStorage.setItem('r6.settings', JSON.stringify(this.settings)); } catch (e) {} this.applyAudioSettings(); }
@@ -123,6 +124,8 @@ class App {
   overlay(title, html, actions = [{ label: 'CLOSE', primary: true, fn: () => this.closeOverlay() }]) {
     this.closeOverlay();
     const o = document.createElement('div'); o.className = 'overlay'; o.innerHTML = `<div class="box"><h2>${title}</h2>${html}<div class="actions"></div></div>`;
+    // a click already in flight (firing when pointer lock dropped) must not land on a button
+    o.style.pointerEvents = 'none'; setTimeout(() => { o.style.pointerEvents = ''; }, 450);
     const acts = o.querySelector('.actions'); for (const a of actions) { const b = document.createElement('button'); b.className = 'btn' + (a.primary ? ' primary' : '') + (a.danger ? ' danger' : ''); b.textContent = a.label; b.addEventListener('click', () => { AudioEngine.click('ui'); a.fn(); }); acts.appendChild(b); }
     this.uiRoot.appendChild(o); this.currentOverlay = o; return o;
   }
@@ -158,7 +161,7 @@ class App {
     if (this.menu && this.mode === 'menu') this.menu.render();
   }
   openControls(onClose) {
-    const rows = [['Move', 'W A S D'], ['Sprint', 'SHIFT'], ['Crouch', 'C'], ['Prone', 'Z / CTRL'], ['Lean', 'Q / E'], ['Vault / Enter window', 'SPACE'], ['Interact / Rappel', 'F'], ['Aim down sights', 'RMB'], ['Fire', 'LMB'], ['Reload', 'R'], ['Fire mode', 'B'], ['Melee', 'V'], ['Primary / Secondary', '1 / 2'], ['Unique gadget', '3'], ['Secondary gadget', '4 / G'], ['Detonate (charge/nitro)', 'LMB'], ['Drone (prep)', 'X'], ['Scoreboard', 'TAB'], ['Pause', 'ESC']];
+    const rows = [['Move', 'W A S D'], ['Sprint', 'SHIFT'], ['Crouch', 'C'], ['Prone', 'Z'], ['Lean', 'Q / E'], ['Vault / Enter window', 'SPACE'], ['Interact / Rappel', 'F'], ['Aim down sights', 'RMB'], ['Fire', 'LMB'], ['Reload', 'R'], ['Fire mode', 'B'], ['Melee', 'V'], ['Primary / Secondary', '1 / 2'], ['Unique gadget', '3'], ['Secondary gadget', '4 / G'], ['Detonate (charge/nitro)', 'LMB'], ['Observation tool (drone view)', '5 / X'], ['Return to operator', '5'], ['Deploy a new drone', '6'], ['Drone: identify enemy', 'HOLD X'], ['Drone: ping', 'Z'], ['Ping (operator)', 'M'], ['Drone: jump', 'SPACE'], ['Scoreboard', 'TAB'], ['Pause', 'ESC']];
     this.overlay('CONTROLS', `<div class="controls-list">${rows.map(([a, b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('')}</div>`, [{ label: 'DONE', primary: true, fn: () => { this.closeOverlay(); onClose && onClose(); } }]);
   }
 

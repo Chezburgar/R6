@@ -12,7 +12,8 @@ deployed as a static site on GitHub Pages. 5 attackers vs 5 defenders, Bomb mode
   surfaces, damage fall-off and headshot lethality. Real picture-in-picture 2.5x scope, iron sights, red dot.
 - **Border**: two floors, 22 rooms, three bomb-site pairs, destructible drywall (bullets, melee, hammer, explosives),
   reinforcements, barricades, hatches, glass, rappel, vaulting, lean, crouch, prone.
-- **Match flow**: operator select → 45 s preparation (drone for attackers, setup for defenders) → 3 min action →
+- **Match flow**: operator select → 30 s preparation (attackers drone through drone holes, identify and ping;
+  defenders reinforce, board up doors and windows plank by plank, place gadgets) → 3 min action →
   plant / defuse → round end, side swap, first-to-N.
 - **AI** teammates and opponents: navigation, setup plans (reinforce, barricade, gadgets), entry routes,
   breaching, planting, retakes, callouts, hearing, reaction time and settling accuracy by difficulty.
@@ -20,9 +21,14 @@ deployed as a static site on GitHub Pages. 5 attackers vs 5 defenders, Bomb mode
   convolution reverb, footsteps by surface, reloads, explosions, gadgets and UI.
 
 ## Controls
-WASD move · Shift sprint · C crouch · Z / Ctrl prone · Q / E lean · Space vault (or enter a window while rappelling) ·
+WASD move · Shift sprint · C crouch · Z prone · Q / E lean · Space vault (or enter a window while rappelling) ·
 F interact / rappel · RMB aim · LMB fire · R reload · B fire mode · V melee · 1 / 2 weapons · 3 unique gadget ·
-4 / G secondary gadget · X drone (prep) · Tab scoreboard · Esc pause
+4 / G secondary gadget · 5 / X drone view · 6 deploy a new drone · M ping · Tab scoreboard · Esc pause
+
+Drone: WASD drive · Space jump · hold **X** on an enemy to identify them (live red marker for the team) ·
+**Z** contextual ping · **5** back to the operator (during the action phase; the preparation phase is played from the drone).
+
+Ctrl is deliberately unbound: in a browser Ctrl+W closes the tab and Ctrl+S / D / F open dialogs, which drops pointer lock.
 
 ## Running locally
 Any static server works (ES modules need http):

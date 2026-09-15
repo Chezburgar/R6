@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Character, Stance, BODY_HEIGHT } from './Character.js';
 import { speedFor, Gadgets as GadgetDefs, SecondaryGadgets } from '../data/operators.js';
 import { WeaponModels } from '../data/weapons.js';
+import { BARRICADE_BUILD_TIME } from '../map/Level.js';
 
 // AI operators. Perception (vision cone + LOS + hearing + team callouts), navigation on the
 // layered nav grid, combat with reaction time / settling accuracy / burst fire, preparation-
@@ -34,11 +35,12 @@ export class Bot {
   }
 
   // ---------- lifecycle ----------
-  spawn(pos, yaw) { this.rallyDone = false; this.rallyT = 0; this.char.reset(pos, yaw); this.aimYaw = yaw; this.aimPitch = 0; this.vel.set(0, 0, 0); this.state = 'idle'; this.path = null; this.goal = null; this.target = null; this.plan = []; this.planIdx = 0; this.holdSpot = null; this.stateT = 0; this.reviveTarget = null; this.thermiteWall = null; this.char.setVisible(true); }
+  spawn(pos, yaw) { this.rallyDone = false; this.rallyT = 0; this.buildingBar = null; this.char.reset(pos, yaw); this.aimYaw = yaw; this.aimPitch = 0; this.vel.set(0, 0, 0); this.state = 'idle'; this.path = null; this.goal = null; this.target = null; this.plan = []; this.planIdx = 0; this.holdSpot = null; this.stateT = 0; this.reviveTarget = null; this.thermiteWall = null; this.char.setVisible(true); }
   get alive() { return this.char.alive && !this.char.dead; }
 
   update(dt) {
     const C = this.char; const g = this.game;
+    if ((C.dead || C.dbno) && this.buildingBar) { if (this.buildingBar.building) this.buildingBar.cancelBuild(); this.buildingBar.builder = null; this.buildingBar = null; }
     if (C.dead) { C.updateBody(dt, g.camera); return; }
     C.stunned = Math.max(0, C.stunned - dt); C.empd = Math.max(0, C.empd - dt); C.wire = Math.max(0, C.wire - dt);
     this.stateT += dt; this.meleeT = Math.max(0, this.meleeT - dt); this.gadgetT = Math.max(0, this.gadgetT - dt);
@@ -186,7 +188,16 @@ export class Bot {
       }
     }
     // steering: avoid walking into walls when path is stale — probe ahead
-    if (wish.lengthSq() > 0) { const o = C.pos.clone(); o.y += 0.6; const h = W.raycast(o, wish, 0.7, { filter: c => c.solid && c.blocksNav !== false }); if (h && h.collider.tag !== 'stairs' && h.collider.max.y - C.pos.y > 0.45) { /* blocked: try barricade/glass handling */ this._handleBlock(h); } }
+    if (wish.lengthSq() > 0) {
+      const o = C.pos.clone(); o.y += 0.6; let h = W.raycast(o, wish, 0.7, { filter: c => c.solid && c.blocksNav !== false });
+      // a half-broken barricade can leave the knee probe clear while boards still block the chest
+      if ((!h || h.collider.tag !== 'barricade') && g.level.barricadeSlots.some(s => s.barricade.built && Math.abs(s.x - C.pos.x) < 1.5 && Math.abs(s.z - C.pos.z) < 1.5 && Math.abs(s.y - C.pos.y) < 1.5)) {
+        // probe the body's width at knee and chest height so boards beside a half-broken hole get hit too
+        const lat = _v2.set(-wish.z, 0, wish.x);
+        outer: for (const hy of [0.6, 1.35]) for (const off of [0, -0.19, 0.19]) { o.copy(C.pos).addScaledVector(lat, off); o.y = C.pos.y + hy; const h2 = W.raycast(o, wish, 0.7, { filter: c => c.tag === 'barricade' && c.solid }); if (h2) { h = h2; break outer; } }
+      }
+      if (h && h.collider.tag !== 'stairs' && h.collider.max.y - C.pos.y > 0.45) { /* blocked: try barricade/glass handling */ this._handleBlock(h); }
+    }
     this.vel.x = THREE.MathUtils.damp(this.vel.x, wish.x * speed, 10, dt); this.vel.z = THREE.MathUtils.damp(this.vel.z, wish.z * speed, 10, dt);
     this.vel.y -= 22 * dt;
     const h = BODY_HEIGHT[C.stance];
@@ -249,6 +260,9 @@ export class Bot {
     if (!this.plan.length && !this.planBuilt) { this.planBuilt = true; this.plan = g.defensePlan.take(this); this.planIdx = 0; }
     const task = this.plan[this.planIdx];
     if (!task) { this._goHold(); return; }
+    // a task that can't be reached (blocked spot, boarded door) is skipped instead of eating the whole phase
+    if (this._taskIdx !== this.planIdx) { this._taskIdx = this.planIdx; this.taskT = 0; }
+    this.taskT = (this.taskT || 0) + dt; if (this.taskT > 14) { if (this.buildingBar) { if (this.buildingBar.building) this.buildingBar.cancelBuild(); this.buildingBar.builder = null; this.buildingBar = null; } this.planIdx++; this.stop(); this.workT = 0; return; }
     if (task.type === 'reinforce') {
       const w = task.wall; if (w.reinforced || g.match.reinforcementsLeft <= 0) { this.planIdx++; return; }
       const p = task.pos; if (C.pos.distanceTo(p) > 1.2) { this.moveTo(p, 0.8); this.workT = 0; return; }
@@ -258,11 +272,13 @@ export class Bot {
       return;
     }
     if (task.type === 'barricade') {
-      const s = task.slot; if (s.barricade.alive()) { this.planIdx++; return; }
+      const s = task.slot; const b = s.barricade; if (b.alive() || (b.building && b.builder !== this)) { this.planIdx++; return; }
       const p = task.pos; if (C.pos.distanceTo(p) > 1.3) { this.moveTo(p, 0.9); this.workT = 0; return; }
-      this.stop(); const d = new THREE.Vector3(s.x, s.y + 1, s.z).sub(C.pos); this.aimYaw = Math.atan2(-d.x, -d.z);
-      this.workT = (this.workT || 0) + dt; if (!this.workSound) this.workSound = g.audio.tool('barricade', new THREE.Vector3(s.x, s.y + 1, s.z), 1.6);
-      if (this.workT >= 1.6) { s.barricade.build(); this.workT = 0; this.workSound = null; this.planIdx++; }
+      this.stop(); const d = new THREE.Vector3(s.x, s.y + 1, s.z).sub(C.pos); this.aimYaw = Math.atan2(-d.x, -d.z); this.aimPitch = 0;
+      if (!b.building) { b.beginBuild(C.pos, false); b.builder = this; this.buildingBar = b; this.workT = 0; }
+      C.lowReadyTarget = 1;
+      this.workT = (this.workT || 0) + dt; b.setProgress(Math.min(1, this.workT / BARRICADE_BUILD_TIME), dt);
+      if (this.workT >= BARRICADE_BUILD_TIME) { b.finish(); b.builder = null; this.buildingBar = null; this.workT = 0; this.planIdx++; }
       return;
     }
     if (task.type === 'gadget') {
@@ -308,7 +324,9 @@ export class Bot {
       this.moveTo(M.defuser.pos, 4); return;
     }
     // engaged: hold position and fight; if target lost for long, investigate briefly then return
-    if (this.target && g.time - this.lastSeenT < 1) { this.stop(); C.stance = Stance.STAND; this.state = 'engage'; return; }
+    if (this.target && g.time - this.lastSeenT < 1) { if (this.buildingBar && this.buildingBar.building) { this.buildingBar.cancelBuild(); this.buildingBar.builder = null; this.buildingBar = null; } this.stop(); C.stance = Stance.STAND; this.state = 'engage'; return; }
+    // like real defenders, finish the setup (reinforcements, boards, gadgets) into the first part of the action phase while it is quiet
+    if (M.phase === 'action' && M.timeLeft > M.s.actionTime - 50 && this.planIdx < this.plan.length && !(this.target && g.time - this.lastSeenT < 6) && this.hearT <= 0) { this._defPrep(dt); return; }
     if (this.target && g.time - this.lastSeenT < 5 && this.D.aggression > 0.5 && this.role === 'roamer') { this.moveTo(this.lastSeen, 1.5); this.state = 'move'; return; }
     if (this.hearPoint && this.hearT > 0 && this.role === 'roamer' && this.hearPoint.distanceTo(C.pos) < 14) { this.moveTo(this.hearPoint, 1.5); this.state = 'move'; C.stance = Stance.STAND; if (this.arrived()) this.hearT = 0; return; }
     // periodically rotate hold spots

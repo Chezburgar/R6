@@ -122,10 +122,10 @@ export class NavGrid {
       const bx = dx ? (dx > 0 ? 1 : 2) : 0, bz = dz ? (dz > 0 ? 4 : 8) : 0;
       if (bx && !(n.edges & bx)) continue;
       if (bz && !(n.edges & bz)) continue;
-      // barricaded edge: defenders never cross, attackers pay to breach
+      // barricaded edge: attackers pay to breach; defenders avoid their own boards unless there is no other way
       const barred = (bx && (n.bars & bx)) || (bz && (n.bars & bz));
-      if (barred && (side === 'def' || (dx && dz))) continue;
-      const barCost = barred ? 14 : 0;
+      if (barred && dx && dz) continue;
+      const barCost = barred ? (side === 'def' ? 60 : 14) : 0;
       for (const m of nodes) {
         if (!m.walkable) continue;
         const dy = m.y - n.y;

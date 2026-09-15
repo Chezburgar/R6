@@ -173,44 +173,175 @@ export class SoftWall {
   }
 }
 
+export const BARRICADE_BUILD_TIME = 2.6;   // seconds, Siege pace: grab planks, then slap them on one by one
+const PLANK_T = 0.032;                      // board thickness
+const _bTints = [0xffffff, 0xf0e2cc, 0xd9c6ab, 0xe8dcc6];
+
 export class Barricade {
-  // Wooden planks over a door/window opening. slot: {x,y,z,w,h,horizontal}
+  // Siege-style wooden barricade over a door/window: vertical boards nailed across the opening
+  // with two cross braces on the builder's side. Boards are split into bottom / middle / top
+  // chunks so melee and bullets open a hole in the middle while jagged remnants stay on the frame.
+  // slot: {x,y,z,w,h,horizontal}
   constructor(level, slot) {
-    this.level = level; this.slot = slot; this.planks = []; this.hp = 3; this.built = false; this.progress = 0;
+    this.level = level; this.slot = slot;
+    this.parts = [];          // { mesh, col, plank, seg, dead, hits, mid }
+    this.braces = []; this.nails = null;
+    this.hp = 3; this.built = false; this.building = false; this.opened = false; this.progress = 0;
+    this._order = []; this._placed = 0; this._anim = [];
   }
-  build() {
-    if (this.built) return; this.built = true;
-    const s = this.slot; const n = 5; const ph = s.h / n;
+  alive() { return this.built && !this.opened; }
+
+  // ---- construction --------------------------------------------------------------------
+  _layout() {
+    const s = this.slot; const W = s.w + 0.14;
+    const n = Math.max(4, Math.round(W / 0.2)); const gap = 0.006; const pw = (W - gap * (n - 1)) / n;
+    return { n, pw, gap, W };
+  }
+  beginBuild(builderPos, builderIsPlayer = false) {
+    if (this.building) return; this._clear(); this.building = true; this.builderIsPlayer = builderIsPlayer; this.progress = 0; this._placed = 0; this.opened = false; this.hp = 3;
+    const s = this.slot; const { n, pw, gap, W } = this._layout();
+    // side the builder stands on: braces go there, boards are placed from the builder's right to left
+    const axis = s.horizontal ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+    const nrm = s.horizontal ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+    const toB = builderPos ? new THREE.Vector3(builderPos.x - s.x, 0, builderPos.z - s.z) : nrm.clone();
+    const side = Math.sign(toB.dot(nrm)) || 1; this.inward = nrm.clone().multiplyScalar(side);
+    const rightDir = new THREE.Vector3().crossVectors(this.inward.clone().negate(), new THREE.Vector3(0, 1, 0)); // builder faces -inward; right = forward x up
+    const segs = [[0, 0.1], [0.1, 0.52], [0.52, 0.94], [0.94, 1]];   // bottom / lower-mid / upper-mid / top fractions of the opening height (a body fits between the strips)
+    const group = new THREE.Group(); this.group = group; this.level.dynamicGroup.add(group);
+    const list = [];
     for (let k = 0; k < n; k++) {
-      const y = s.y + k * ph + ph / 2;
-      const w = s.horizontal ? s.w : 0.09, d = s.horizontal ? 0.09 : s.w;
-      const geo = boxGeometry(w, ph * 0.92, d, 1);
-      const mesh = new THREE.Mesh(geo, getMaterial('plank')); mesh.position.set(s.x, y, s.z); mesh.rotation.z = (Math.random() - 0.5) * 0.02;
-      mesh.castShadow = true; mesh.receiveShadow = true; this.level.dynamicGroup.add(mesh);
-      const min = new THREE.Vector3(s.x - w / 2, y - ph / 2, s.z - d / 2), max = new THREE.Vector3(s.x + w / 2, y + ph / 2, s.z + d / 2);
-      const col = this.level.world.add(new Collider(min, max, { material: 'barricade', penetrable: true, penMult: 0.75, owner: this, tag: 'barricade', floor: s.floor, blocksNav: false }));
-      this.planks.push({ mesh, col, hits: 0, dead: false });
+      const a = -W / 2 + pw / 2 + k * (pw + gap);
+      const cx = s.x + axis.x * a, cz = s.z + axis.z * a;
+      const tint = _bTints[(k * 7 + Math.round(s.x * 3)) % _bTints.length];
+      const mat = getMaterial('barricade', { color: tint });
+      const tilt = (Math.random() - 0.5) * 0.012;
+      const plank = { k, cx, cz, a, parts: [], tilt, mat, group: new THREE.Group() };
+      plank.group.position.set(cx, s.y + s.h / 2, cz); if (s.horizontal) plank.group.rotation.z = tilt; else plank.group.rotation.x = tilt; plank.group.visible = false; group.add(plank.group);
+      for (let j = 0; j < segs.length; j++) {
+        const [f0, f1] = segs[j]; const y0 = s.y + f0 * s.h, y1 = s.y + f1 * s.h; const sh = y1 - y0, cy = (y0 + y1) / 2;
+        const w = s.horizontal ? pw : PLANK_T, d = s.horizontal ? PLANK_T : pw;
+        const geo = new THREE.BoxGeometry(w, sh, d);
+        // UV: u across the board, v along it (continuous across the three chunks)
+        const uv = geo.attributes.uv, pos = geo.attributes.position, nr = geo.attributes.normal;
+        for (let i = 0; i < uv.count; i++) { const across = s.horizontal ? pos.getX(i) : pos.getZ(i); const ny = Math.abs(nr.getY(i)); const u = ny > 0.5 ? 0.5 : across / pw + 0.5; const v = ny > 0.5 ? 0.5 : (pos.getY(i) + cy - s.y) / s.h * (0.8 + (k % 3) * 0.1) + k * 0.37; uv.setXY(i, u, v); }
+        const mesh = new THREE.Mesh(geo, mat); mesh.position.set(0, cy - (s.y + s.h / 2), 0); mesh.castShadow = true; mesh.receiveShadow = true;
+        plank.group.add(mesh);
+        // colliders cover the gaps too, so nothing slips between boards
+        const gw = s.horizontal ? gap / 2 : 0, gd = s.horizontal ? 0 : gap / 2;
+        const min = new THREE.Vector3(cx - w / 2 - gw, y0, cz - d / 2 - gd), max = new THREE.Vector3(cx + w / 2 + gw, y1, cz + d / 2 + gd);
+        const part = { mesh, min, max, col: null, plank, seg: j, mid: j === 1 || j === 2, dead: false, hits: 0, cy, center: new THREE.Vector3(cx, cy, cz) };
+        plank.parts.push(part); this.parts.push(part);
+      }
+      list.push(plank);
+    }
+    const rk = s.horizontal ? rightDir.x : rightDir.z;
+    list.sort((p, q) => (q.a - p.a) * rk);   // builder's right first
+    this._order = list; this._nPlanks = n;
+    // braces (builder's side), added at the end of the build
+    const bw = W + 0.08; const bt = 0.035;
+    for (const f of [0.2, 0.8]) {
+      const cy = s.y + f * s.h; const off = side * (PLANK_T / 2 + bt / 2 + 0.002);
+      const w = s.horizontal ? bw : bt, d = s.horizontal ? bt : bw;
+      const geo = new THREE.BoxGeometry(w, 0.11, d);
+      const uv = geo.attributes.uv, pos = geo.attributes.position, nr = geo.attributes.normal;
+      for (let i = 0; i < uv.count; i++) { const along = s.horizontal ? pos.getX(i) : pos.getZ(i); const ny = Math.abs(nr.getY(i)); uv.setXY(i, ny > 0.5 ? 0.5 : pos.getY(i) / 0.11 + 0.5, along / (0.19 * 6) + 0.5); }
+      const mesh = new THREE.Mesh(geo, getMaterial('barricade', { color: 0xcdb99a })); mesh.position.set(s.x + nrm.x * off, cy, s.z + nrm.z * off); mesh.castShadow = true; mesh.receiveShadow = true; mesh.visible = false;
+      group.add(mesh); this.braces.push({ mesh, y: cy, off });
+    }
+  }
+  // t: 0..1 build progress. Boards appear one after another with a snap; braces + nails last.
+  setProgress(t, dt = 1 / 60) {
+    if (!this.building) return; this.progress = t;
+    const n = this._nPlanks; const t0 = 0.26, t1 = 0.88;
+    const want = Math.min(n, Math.floor(Math.max(0, (t - t0) / (t1 - t0)) * n + 1e-6));
+    while (this._placed < want) { const plank = this._order[this._placed++]; this._placePlank(plank); }
+    if (t >= 0.9 && this.braces[0] && !this.braces[0].mesh.visible) { this.braces[0].mesh.visible = true; this._snap(this.braces[0].mesh, this.inward, 0.12); this._knock(this.braces[0].mesh.position); }
+    if (t >= 0.97 && this.braces[1] && !this.braces[1].mesh.visible) { this.braces[1].mesh.visible = true; this._snap(this.braces[1].mesh, this.inward, 0.12); this._knock(this.braces[1].mesh.position); this._addNails(); }
+    this._tick(dt);
+  }
+  // world position the builder's support hand reaches to (for first-person animation)
+  handPoint(out) {
+    const s = this.slot; const inward = this.inward || new THREE.Vector3(0, 0, 1);
+    if (this._placed === 0) { return out.set(s.x, s.y + s.h * 0.62, s.z).addScaledVector(inward, 0.3); }
+    const p = this._order[Math.min(this._order.length - 1, this._placed - 1)];
+    return out.set(p.cx, s.y + s.h * 0.62, p.cz).addScaledVector(inward, 0.08);
+  }
+  _placePlank(plank) {
+    plank.group.visible = true; this._snap(plank.group, this.inward, 0.16);
+    for (const part of plank.parts) {
+      part.mesh.visible = true;
+      // the thin top/bottom strips never block movement (a body fits through once the middle is broken) but still stop bullets
+      part.col = this.level.world.add(new Collider(part.min, part.max, { material: 'barricade', penetrable: true, penMult: 0.75, owner: this, tag: 'barricade', floor: this.slot.floor, blocksNav: false, solid: part.mid }));
+      part.dead = false;
+    }
+    this._knock(new THREE.Vector3(plank.cx, this.slot.y + this.slot.h * 0.5, plank.cz));
+  }
+  _snap(mesh, dir, dist) { this._anim.push({ mesh, t: 0, from: dir.clone().multiplyScalar(dist), base: mesh.position.clone() }); mesh.position.addScaledVector(dir, dist); }
+  _tick(dt) {
+    // snap-in animation (boards slide the last few cm onto the frame)
+    for (let i = this._anim.length - 1; i >= 0; i--) { const a = this._anim[i]; a.t += dt; const k = Math.min(1, a.t / 0.11); a.mesh.position.copy(a.base).addScaledVector(a.from, 1 - k * k); if (k >= 1) this._anim.splice(i, 1); }
+  }
+  _knock(pos) { this.level.onBarricadeKnock && this.level.onBarricadeKnock(this, pos, this.builderIsPlayer); }
+  _addNails() {
+    if (this.nails) return; const s = this.slot; const n = this._nPlanks; const count = n * 2;
+    const inst = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.007, 0.007, 0.01, 6), getMaterial('metal', { color: 0x777777 }), count);
+    const d = new THREE.Object3D(); let i = 0; const nrm = s.horizontal ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0); const sgn = Math.sign(this.braces[0].off) || 1;
+    for (const b of this.braces) for (const p of this._order) { d.position.set(p.cx + nrm.x * (b.off + sgn * 0.02), b.y + (Math.random() - 0.5) * 0.02, p.cz + nrm.z * (b.off + sgn * 0.02)); d.rotation.set(s.horizontal ? Math.PI / 2 : 0, 0, s.horizontal ? 0 : Math.PI / 2); d.updateMatrix(); inst.setMatrixAt(i++, d.matrix); }
+    inst.castShadow = false; this.group.add(inst); this.nails = inst;
+  }
+  finish() {
+    if (!this.building) return;
+    this.setProgress(1, 1); for (const a of this._anim) a.mesh.position.copy(a.base); this._anim.length = 0;
+    this.building = false; this.built = true; this.opened = false; this.hp = 3;
+    this.level.onBarricadeChanged && this.level.onBarricadeChanged(this);
+  }
+  cancelBuild() { if (!this.building) return; this._clear(); this.building = false; }
+  // instant build (AI shortcut / legacy)
+  build(builderPos) { this.beginBuild(builderPos); this.finish(); }
+
+  // ---- damage --------------------------------------------------------------------------
+  _killPart(p) { if (p.dead) return; p.dead = true; if (p.col) { this.level.world.remove(p.col); p.col = null; } p.mesh.visible = false; }
+  _afterDamage() {
+    const midAlive = this.parts.some(p => p.mid && !p.dead);
+    for (const b of this.braces) { const band = this.parts.filter(p => p.mid && Math.abs(p.cy - b.y) < this.slot.h * 0.3); const dead = band.filter(p => p.dead).length; if (dead > band.length * 0.5) b.mesh.visible = false; }
+    if (this.nails && this.braces.every(b => !b.mesh.visible)) this.nails.visible = false;
+    if (!midAlive && !this.opened) {
+      // a person-sized hole: the top and bottom remnants stay as decoration only
+      this.opened = true; for (const p of this.parts) if (!p.dead && p.col) { this.level.world.remove(p.col); p.col = null; }
+      for (const b of this.braces) b.mesh.visible = false; if (this.nails) this.nails.visible = false;
     }
     this.level.onBarricadeChanged && this.level.onBarricadeChanged(this);
   }
-  alive() { return this.built && this.planks.some(p => !p.dead); }
-  _killPlank(p) { if (p.dead) return; p.dead = true; this.level.world.remove(p.col); this.level.dynamicGroup.remove(p.mesh); p.mesh.geometry.dispose(); }
+  // melee: three hits open the middle, closest boards to the hit first
   melee(point) {
     if (!this.alive()) return false;
     this.hp--;
-    // break planks closest to hit point first
-    const order = this.planks.filter(p => !p.dead).sort((a, b) => Math.abs(a.mesh.position.y - point.y) - Math.abs(b.mesh.position.y - point.y));
-    const kill = this.hp <= 0 ? order.length : 2;
-    for (let i = 0; i < kill && i < order.length; i++) this._killPlank(order[i]);
-    if (!this.alive()) this.destroy();
-    else this.level.onBarricadeChanged && this.level.onBarricadeChanged(this);
+    const along = this.slot.horizontal ? point.x : point.z;
+    const d2 = p => { const a = (this.slot.horizontal ? p.plank.cx : p.plank.cz) - along, dy = (p.cy - point.y) * 0.6; return a * a + dy * dy; };
+    const mids = this.parts.filter(p => p.mid && !p.dead).sort((a, b) => d2(a) - d2(b));
+    const kill = this.hp <= 0 ? mids.length : Math.max(3, Math.ceil(this._nPlanks * 2 / 3));
+    for (let i = 0; i < kill && i < mids.length; i++) { this._killPart(mids[i]); this.level.onBarricadeChunk && this.level.onBarricadeChunk(mids[i].center, this.inward); }
+    this._afterDamage();
     return true;
   }
   bullet(col) {
-    const p = this.planks.find(p => p.col === col); if (!p || p.dead) return;
-    p.hits++; if (p.hits >= 10) { this._killPlank(p); if (!this.alive()) this.destroy(); else this.level.onBarricadeChanged && this.level.onBarricadeChanged(this); }
+    const p = this.parts.find(p => p.col === col); if (!p || p.dead) return;
+    p.hits += 1; const limit = p.mid ? 5 : 7;
+    if (p.hits >= limit) { this._killPart(p); this.level.onBarricadeChunk && this.level.onBarricadeChunk(p.center, this.inward); this._afterDamage(); }
   }
-  destroy() { for (const p of this.planks) this._killPlank(p); this.built = false; this.hp = 3; this.planks = []; this.level.onBarricadeChanged && this.level.onBarricadeChanged(this); }
+  destroy() {
+    if (!this.built && !this.building) return;
+    for (const p of this.parts) if (!p.dead) this._killPart(p);
+    this._clear(); this.built = false; this.building = false; this.opened = false; this.hp = 3;
+    this.level.onBarricadeChanged && this.level.onBarricadeChanged(this);
+  }
+  _clear() {
+    for (const p of this.parts) { if (p.col) this.level.world.remove(p.col); p.mesh.geometry.dispose(); }
+    for (const b of this.braces) b.mesh.geometry.dispose();
+    if (this.nails) this.nails.geometry.dispose();
+    if (this.group) this.level.dynamicGroup.remove(this.group);
+    this.parts = []; this.braces = []; this.nails = null; this.group = null; this._order = []; this._placed = 0; this._anim.length = 0;
+  }
 }
 
 export class Hatch {
@@ -239,7 +370,7 @@ export class Level {
     this.group = new THREE.Group(); this.dynamicGroup = new THREE.Group();
     scene.add(this.group); scene.add(this.dynamicGroup);
     this._static = new Map();      // materialKey -> geometries[]
-    this.softWalls = []; this.barricadeSlots = []; this.hatches = []; this.glass = [];
+    this.softWalls = []; this.barricadeSlots = []; this.hatches = []; this.glass = []; this.droneHoles = [];
     this.rooms = []; this.sites = []; this.spawns = { atk: [], def: [] };
     this.lights = []; this.rappelWalls = [];
     this.floorYs = [0, FLOOR_H];
@@ -247,7 +378,7 @@ export class Level {
     this.interiorBounds = new THREE.Box3();
     this._cellInst = null; this._cellMetalInst = null; this._studInst = null;
     this._cellCount = 0; this._studCount = 0;
-    this.onCellDestroyed = null; this.onWallChanged = null; this.onBarricadeChanged = null; this.onHatchChanged = null;
+    this.onCellDestroyed = null; this.onWallChanged = null; this.onBarricadeChanged = null; this.onHatchChanged = null; this.onBarricadeKnock = null; this.onBarricadeChunk = null;
     this.decals = [];
     this.emissives = [];
     this.debris = [];
@@ -327,6 +458,15 @@ export class Level {
       this.box([cx - mw / 2, y, cz - md / 2], [cx + mw / 2, y + o.h, cz + md / 2], 'plank', { uvScale: 1, collide: false });
       const hw2 = horizontal ? o.w / 2 : 0.03, hd2 = horizontal ? 0.03 : o.w / 2;
       this.box([cx - hw2, y + o.h * 0.55 - 0.02, cz - hd2], [cx + hw2, y + o.h * 0.55 + 0.02, cz + hd2], 'plank', { uvScale: 1, collide: false });
+    }
+    if (o.kind === 'drone') {
+      // drone hole: a small opening at floor level with a dark metal grate frame
+      const fw = horizontal ? o.w + 0.08 : t + 0.02, fd = horizontal ? t + 0.02 : o.w + 0.08;
+      this.box([cx - fw / 2, y + o.h, cz - fd / 2], [cx + fw / 2, y + o.h + 0.04, cz + fd / 2], 'metal', { uvScale: 1, collide: false, matVariant: 'dark', matOverrides: { color: 0x444444 } });
+      const pw = horizontal ? 0.04 : t + 0.02, pd = horizontal ? t + 0.02 : 0.04, ox = horizontal ? o.w / 2 + 0.02 : 0, oz = horizontal ? 0 : o.w / 2 + 0.02;
+      this.box([cx - ox - pw / 2, y, cz - oz - pd / 2], [cx - ox + pw / 2, y + o.h, cz - oz + pd / 2], 'metal', { uvScale: 1, collide: false, matVariant: 'dark', matOverrides: { color: 0x444444 } });
+      this.box([cx + ox - pw / 2, y, cz + oz - pd / 2], [cx + ox + pw / 2, y + o.h, cz + oz + pd / 2], 'metal', { uvScale: 1, collide: false, matVariant: 'dark', matOverrides: { color: 0x444444 } });
+      this.droneHoles.push(slot); return slot;
     }
     if (o.kind !== 'garage' && o.kind !== 'arch') { slot.barricade = new Barricade(this, slot); this.barricadeSlots.push(slot); }
     // door frame trim
@@ -642,7 +782,7 @@ export class Level {
       const fx = dir.x, fz = dir.z; const fl = Math.hypot(fx, fz) || 1; const dot = (dx * fx + dz * fz) / (dist * fl + 1e-6);
       if (dot < 0.6) continue;
       const built = s.barricade.alive();
-      if (!built && side === 'def') out.push({ type: 'barricade', slot: s, dist });
+      if (!built && !s.barricade.building && side === 'def') out.push({ type: 'barricade', slot: s, dist });
       if (built && s.barricade.built) out.push({ type: 'barricadeBuilt', slot: s, dist });
     }
     if (h) {

@@ -8,6 +8,7 @@ import { healthFor } from '../data/operators.js';
 // held weapon, hitboxes for ballistics, health / DBNO / death.
 
 const ARM_BONES = { left: ['LeftArm', 'LeftForeArm', 'LeftHand'], right: ['RightArm', 'RightForeArm', 'RightHand'] };
+const PROC_BONES = ['Spine', 'Spine01', 'Spine02', 'neck'];   // bones the procedural aim layer rotates on top of the animation
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _m = new THREE.Matrix4();
 
 export const Stance = { STAND: 0, CROUCH: 1, PRONE: 2 };
@@ -122,7 +123,7 @@ export class Character {
     this.root.rotation.set(0, this.yaw + Math.PI, 0);
     const A = this.actions;
     if (this.dead || this.dbno) {
-      this.mixer.update(dt);
+      this._mixerUpdate(dt);
       if (this.dbno) { this._applyDBNO(dt); if (!this.reviver) { this.bleedT = (this.bleedT || 0) + dt; this.dbnoHealth -= dt * (20 / 45); if (this.dbnoHealth <= 0) this.die(this.lastDamager, null, false); } }
       this._placeWeapon(); this._armIK();
       this._hbStale = true;
@@ -138,7 +139,7 @@ export class Character {
     blend(A.idle, wIdle); blend(A.walk, wWalk); blend(A.run, wRun);
     if (A.walk) A.walk.timeScale = 0.9 + sp * 0.6; if (A.run) A.run.timeScale = 0.85 + sp * 0.35;
     if (this.vaulting) { blend(A.vault, 1); } else if (A.vault && A.vault.getEffectiveWeight() > 0) { blend(A.vault, 0); }
-    this.mixer.update(dt);
+    this._mixerUpdate(dt);
     // procedural layers
     this._applyStance(dt);
     this._applyAim();
@@ -151,6 +152,16 @@ export class Character {
       this.footTimer -= dt * (0.7 + sp * 1.3) * (this.stance === Stance.CROUCH ? 0.7 : 1);
       if (this.footTimer <= 0) { this.footTimer = 0.5; this.game.audio.footstep(this.pos, this.surface, sp, this.isPlayer); this.game.noise && this.game.noise(this, sp > 0.6 ? 16 : 7); }
     } else this.footTimer = Math.min(this.footTimer, 0.2);
+  }
+
+  // The mixer only rewrites a bone when its animated value changes, so with a static idle the
+  // procedural spine pitch in _applyAim would accumulate frame over frame (torso folding over).
+  // Restore the last purely-animated pose of those bones before stepping the mixer, then snapshot it.
+  _mixerUpdate(dt) {
+    const B = this.bones; const snap = this._animPose || (this._animPose = {});
+    for (const n of PROC_BONES) { const b = B[n]; if (b && snap[n]) b.quaternion.copy(snap[n]); }
+    this.mixer.update(dt);
+    for (const n of PROC_BONES) { const b = B[n]; if (b) (snap[n] || (snap[n] = new THREE.Quaternion())).copy(b.quaternion); }
   }
 
   _applyStance(dt) {
@@ -210,10 +221,10 @@ export class Character {
     const fwd = _v.set(0, 0, 1), right = _v2.set(-1, 0, 0);
     const chestY = this.dbno ? 0.45 : (this.stance === Stance.PRONE ? 0.45 : 1.32 - (this.crouchDrop || 0) * 0.85);
     const lr = this.lowReady;
-    const pitch = this.dead ? 0 : this.pitch * (1 - lr) + (-0.55) * lr;
-    const yawOff = 0.75 * lr;
-    const pos = _v3.set(0, chestY, 0).addScaledVector(fwd, (0.22 - 0.08 * lr) * Math.cos(pitch)).addScaledVector(right, 0.16 - 0.1 * lr);
-    pos.y += 0.22 * Math.sin(pitch) - 0.08 - 0.16 * lr;
+    const pitch = this.dead ? 0 : this.pitch * (1 - lr) + (-0.5) * lr;
+    const yawOff = 0.6 * lr;
+    const pos = _v3.set(0, chestY, 0).addScaledVector(fwd, (0.22 - 0.06 * lr) * Math.cos(pitch)).addScaledVector(right, 0.16 - 0.07 * lr);
+    pos.y += 0.22 * Math.sin(pitch) - 0.08 - 0.05 * lr;
     if (this.lean) { pos.x += this.lean * 0.12; }
     if (this.dead) { // drop weapon near hand
       this.weaponHolder.position.set(0.3, 0.05, 0.2); this.weaponHolder.rotation.set(0, 0.6, Math.PI / 2 * 0.9);

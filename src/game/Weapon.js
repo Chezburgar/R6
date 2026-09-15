@@ -89,7 +89,7 @@ export class Ballistics {
   shoot(shooter, origin, dir, def, opts = {}) {
     const game = this.game; const world = game.world; const level = game.level; const fx = game.effects;
     const maxDist = 120;
-    const hits = world.trace(origin, dir, maxDist, { filter: c => c.solid || c.tag === 'glass' || c.tag === 'shield' || c.tag === 'gadget' });
+    const hits = world.trace(origin, dir, maxDist, { filter: c => c.solid || c.tag === 'glass' || c.tag === 'shield' || c.tag === 'gadget' || c.tag === 'barricade' });
     // stop distance: first non-penetrable or end of list
     let stopDist = maxDist; let stopHit = null;
     for (const h of hits) { if (h.entry && !h.collider.penetrable) { stopDist = h.dist; stopHit = h; break; } }

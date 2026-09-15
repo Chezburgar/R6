@@ -12,6 +12,7 @@ const win = (at, w = 1.5, y = 1.0, h = 1.5) => ({ at, w, y, h, kind: 'window' })
 const door = (at, w = 1.0, h = 2.2) => ({ at, w, y: 0, h, kind: 'door' });
 const arch = (at, w, h = 2.6) => ({ at, w, y: 0, h, kind: 'arch' });
 const garage = (at, w = 3.5, h = 2.8) => ({ at, w, y: 0, h, kind: 'garage' });
+const dhole = (at) => ({ at, w: 0.5, y: 0, h: 0.36, kind: 'drone' });   // drone hole at floor level
 
 export const SITES = [
   { id: 'tellers', name: '1F TELLERS / BATHROOM', rooms: ['Tellers', 'Bathroom'], floor: 0 },
@@ -92,10 +93,10 @@ export function buildBorder(world, scene) {
   // ---------------- exterior walls ----------------
   const EXT = (x0, z0, x1, z1, floor, openings, outward) => L.hardWall(x0, z0, x1, z1, floor ? F2 : F1, WALL_H, 'concrete', { openings, exterior: true, floor, outward, uvScale: 0.5, skin: floor ? 'plasterBlue' : 'plaster' });
   // 1F
-  EXT(0, 0, 32, 0, 0, [win(2), win(6), door(14, 2, 2.5), win(23), win(28)], -1);                     // south
-  EXT(0, 22, 32, 22, 0, [win(2), win(6.5), door(13), win(20.5), door(27)], 1);                        // north
-  EXT(0, 0, 0, 22, 0, [win(2), win(5), win(10.5, 1, 1.4, 0.8), door(17)], -1);                        // west
-  EXT(32, 0, 32, 22, 0, [garage(2), win(10), door(20.5)], 1);                                         // east
+  EXT(0, 0, 32, 0, 0, [win(2), dhole(4.6), win(6), dhole(11.5), door(14, 2, 2.5), dhole(19.5), win(23), dhole(26.5), win(28)], -1);   // south
+  EXT(0, 22, 32, 22, 0, [win(2), dhole(4.6), win(6.5), dhole(10.5), door(13), dhole(17), win(20.5), dhole(24.5), door(27)], 1);   // north
+  EXT(0, 0, 0, 22, 0, [win(2), dhole(4), win(5), dhole(8), win(10.5, 1, 1.4, 0.8), dhole(14.5), door(17), dhole(19.5)], -1);   // west
+  EXT(32, 0, 32, 22, 0, [garage(2), dhole(7.5), win(10), dhole(13.5), dhole(17.5), door(20.5)], 1);   // east
   // 2F
   EXT(0, 0, 32, 0, 1, [win(2), win(6), win(12), win(17), win(23), win(28)], -1);
   EXT(0, 22, 32, 22, 1, [win(2), win(6.5), win(13.5), win(20.5), win(27)], 1);
@@ -113,11 +114,11 @@ export function buildBorder(world, scene) {
   SOFT(0, 14, 10, 14, 0, [door(5.5)], 'plasterGreen');               // Vent/Bath | Workshop
   SOFT(10, 14, 10, 22, 0, [door(3.5)], 'plasterGreen');              // Workshop | Waiting
   SOFT(10, 8, 20, 8, 0, [arch(2.5, 5)]);                             // Lobby | Main Hallway
-  HARD(20, 0, 20, 8, 0, [door(3.5, 1.5, 2.4)]);                      // Lobby | Customs
+  HARD(20, 0, 20, 8, 0, [dhole(1.2), door(3.5, 1.5, 2.4)]);          // Lobby | Customs
   SOFT(10, 14, 18, 14, 0, [door(1.5)], 'plasterGreen');              // Main Hallway | Waiting
   SOFT(20, 8, 20, 14, 0, [door(2.5)]);                               // Main Hallway | Supply
   SOFT(18, 14, 18, 22, 0, [door(2.5)], 'plasterBlue');               // Waiting | Detention
-  HARD(24, 14, 24, 22, 0, [door(4.5)]);                              // Detention | Exit Hallway
+  HARD(24, 14, 24, 22, 0, [dhole(1.5), door(4.5)]);                  // Detention | Exit Hallway
   SOFT(20, 8, 32, 8, 0, [door(2.5), door(8.5)]);                     // Customs | Supply/Passport
   SOFT(26, 8, 26, 14, 0, [door(1.5)], 'plasterGreen');               // Supply | Passport
   SOFT(18, 14, 32, 14, 0, [door(3.5), door(9.5)], 'plasterBlue');    // Supply/Passport | Detention/Exit

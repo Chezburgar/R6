@@ -340,6 +340,34 @@ class AudioEngineClass {
   }
   _clankAt(input, t) { const ctx = this.ctx; for (const hz of [880, 1320, 2100]) { const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = hz * (0.97 + Math.random() * 0.06); const g = ctx.createGain(); o.connect(g); g.connect(input); this._env(g, t, 0.001, 0.14, 0.18); o.start(t); o.stop(t + 0.4); } const s = this._noiseSrc(); const bp = this._filter('bandpass', 2500, 2); const g2 = ctx.createGain(); s.connect(bp); bp.connect(g2); g2.connect(input); this._env(g2, t, 0.001, 0.4, 0.03); s.start(t); s.stop(t + 0.1); }
 
+  // One barricade plank slapped onto the frame and nailed: wood thunk + nail-gun snap.
+  knock(pos, firstPerson = false) {
+    if (!this.ready) return; const ctx = this.ctx;
+    const out = firstPerson ? { input: ctx.createGain(), when: ctx.currentTime } : this._spatial(pos, { ref: 5, maxDist: 40, gain: 0.9 }); if (!out) return;
+    if (firstPerson) out.input.connect(this.sfx);
+    const t0 = out.when;
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(320 + Math.random() * 60, t0); o.frequency.exponentialRampToValueAtTime(150, t0 + 0.09);
+    const g = ctx.createGain(); o.connect(g); g.connect(out.input); this._env(g, t0, 0.001, 0.6, 0.12); o.start(t0); o.stop(t0 + 0.25);
+    const s1 = this._noiseSrc(); const bp = this._filter('bandpass', 1200 + Math.random() * 400, 1.0); const g2 = ctx.createGain(); s1.connect(bp); bp.connect(g2); g2.connect(out.input); this._env(g2, t0, 0.001, 0.5, 0.05); s1.start(t0); s1.stop(t0 + 0.15);
+    // nail gun: sharp click + air hiss a hair later
+    const t1 = t0 + 0.07; const s2 = this._noiseSrc(); const hp = this._filter('highpass', 4200, 1); const g3 = ctx.createGain(); s2.connect(hp); hp.connect(g3); g3.connect(out.input); this._env(g3, t1, 0.001, 0.35, 0.03); s2.start(t1); s2.stop(t1 + 0.1);
+    const s3 = this._noiseSrc(); const bp2 = this._filter('bandpass', 2600, 3); const g4 = ctx.createGain(); s3.connect(bp2); bp2.connect(g4); g4.connect(out.input); this._env(g4, t1 + 0.01, 0.005, 0.12, 0.08); s3.start(t1); s3.stop(t1 + 0.2);
+  }
+  // Ping / identify UI cues (non-spatial).
+  ping(kind = 'yellow') {
+    if (!this.ready) return; const ctx = this.ctx; const t0 = ctx.currentTime;
+    const notes = kind === 'enemy' ? [1560, 1170] : [1040, 1380];
+    notes.forEach((hz, i) => { const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = hz; const g = ctx.createGain(); o.connect(g); g.connect(this.ui); this._env(g, t0 + i * 0.07, 0.004, 0.22, 0.16); o.start(t0 + i * 0.07); o.stop(t0 + i * 0.07 + 0.3); });
+  }
+  scanTick(frac) {
+    if (!this.ready) return; const ctx = this.ctx; const t0 = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 900 + frac * 700; const lp = this._filter('lowpass', 2400, 1); const g = ctx.createGain(); o.connect(lp); lp.connect(g); g.connect(this.ui); this._env(g, t0, 0.002, 0.08, 0.04); o.start(t0); o.stop(t0 + 0.08);
+  }
+  identify() {
+    if (!this.ready) return; const ctx = this.ctx; const t0 = ctx.currentTime;
+    [1320, 1760, 2200].forEach((hz, i) => { const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = hz; const g = ctx.createGain(); o.connect(g); g.connect(this.ui); this._env(g, t0 + i * 0.05, 0.004, 0.2, 0.3); o.start(t0 + i * 0.05); o.stop(t0 + i * 0.05 + 0.5); });
+  }
+
   emp(pos) {
     if (!this.ready) return; const ctx = this.ctx; const out = this._spatial(pos, { ref: 8, maxDist: 60, gain: 1 }); if (!out) return; const t0 = out.when;
     const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(200, t0); o.frequency.exponentialRampToValueAtTime(3200, t0 + 0.25); o.frequency.exponentialRampToValueAtTime(90, t0 + 0.9);

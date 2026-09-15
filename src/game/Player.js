@@ -377,7 +377,7 @@ export class Player {
     let best = null;
     for (const ch of g.characters) { if (ch === C || ch.dead) continue; const r = ch.raycast(origin, dir, 1.7); if (r && (!best || r.dist < best.r.dist)) best = { ch, r }; }
     if (best) { best.ch.takeDamage(best.ch.dbno ? 200 : 100, 'torso', C, dir, best.r.point, 'melee'); g.audio.melee(best.r.point, true, 'flesh'); g.effects.bloodHit(best.r.point, dir); return; }
-    const h = g.world.raycast(origin, dir, 1.8, { filter: c => c.solid || c.tag === 'glass' || c.tag === 'gadget' });
+    const h = g.world.raycast(origin, dir, 1.8, { filter: c => c.solid || c.tag === 'glass' || c.tag === 'gadget' || c.tag === 'barricade' });
     if (h) {
       if (h.collider.tag === 'gadget' && h.collider.owner && h.collider.owner.onMelee) { h.collider.owner.onMelee(C); g.audio.melee(h.point, true, 'metal'); return; }
       const res = g.level.melee(h, g.effects); g.audio.melee(h.point, true, h.collider.material); g.effects.impact(h.point, h.normal, h.collider.material);
@@ -394,6 +394,7 @@ export class Player {
     const C = this.char; const g = this.game; const hud = g.hud;
     if (this.interaction) {
       this.interactT += dt; hud.progress(this.interactT / this.interactDur, this.interaction.label);
+      if (this.interaction.progress) this.interaction.progress(Math.min(1, this.interactT / this.interactDur), dt);
       const ok = Input.down('interact') || this.interaction.sticky;
       if (!ok || C.dead || C.dbno) { this._cancelInteraction(); return; }
       if (this.interactT >= this.interactDur) { const it = this.interaction; this.interaction = null; hud.progress(-1); it.done(); }
@@ -480,6 +481,7 @@ export class Player {
     let lower = 0; if (w.reloading) lower = 0.5 + 0.5 * Math.sin(Math.min(1, w.reloadTimer / Math.max(0.1, w.reloadTotal)) * Math.PI); if (this.switchT > 0) lower = 1; if (this.melee > 0) lower = 0.8;
     if (C.dbno) lower = 1;
     if (this.gadgetMode || this.gadget2Mode) lower = Math.max(lower, 0.85);   // gadget in hand: weapon slung low
+    if (this.interaction) lower = Math.max(lower, 0.75);   // hands busy (barricading, reinforcing, planting): weapon swung down to the right
     this.lowerBlend = THREE.MathUtils.damp(this.lowerBlend, lower, 12, dt);
     const a = this.adsBlend * (1 - this.sprintBlend);
     const pos = hip.clone().lerp(adsPos, smooth(a));
@@ -540,6 +542,11 @@ export class Player {
     const fwd = C.forwardFlat(_v); A.position.addScaledVector(fwd, 0.02);
     const right = C.right(_v2); A.position.addScaledVector(right, 0.03);
     A.rotation.set(0, C.yaw + Math.PI + BLADE, 0);
+    // working with the support hand (barricade planks): the short rig arm can't reach the work, so the
+    // unseen body leans in toward it and the hand is kept up at eye level where the camera sees it
+    let handGoal = null;
+    if (this.interaction && this.interaction.hand) { handGoal = this.interaction.hand(new THREE.Vector3()); handGoal.y = Math.min(handGoal.y, cam.position.y - 0.14); const d = handGoal.clone().sub(cam.position); d.y = 0; const reach = Math.max(0, d.length() - 0.42); this._leanIn = THREE.MathUtils.damp(this._leanIn || 0, Math.min(0.5, reach), 10, dt); if (d.lengthSq() > 1e-4) A.position.addScaledVector(d.normalize(), this._leanIn); }
+    else this._leanIn = THREE.MathUtils.damp(this._leanIn || 0, 0, 10, dt);
     A.updateMatrixWorld(true);
     const B = this.armBones;
     // reset arm chain to rest then IK
@@ -552,6 +559,7 @@ export class Player {
       const [uN, lN, hN] = side === 'left' ? ['LeftArm', 'LeftForeArm', 'LeftHand'] : ['RightArm', 'RightForeArm', 'RightHand'];
       const gp = side === 'left' ? M.gripL : M.gripR;
       const target = new THREE.Vector3(gp[0], gp[1], gp[2]); inner.localToWorld(target);
+      if (side === 'left' && handGoal) { this._handT = this._handT || target.clone(); this._handT.lerp(handGoal, Math.min(1, dt * 14)); target.copy(this._handT); } else if (side === 'left') this._handT = null;
       const up = B[uN]; up.getWorldPosition(_v3);
       const hint = new THREE.Vector3().copy(_v3).addScaledVector(right, side === 'left' ? -0.5 : 0.7).addScaledVector(fwd, -0.1); hint.y -= 0.8;
       C._twoBone(up, B[lN], B[hN], target, hint, this.armLen[side].upper, this.armLen[side].lower);
@@ -589,7 +597,9 @@ export class Player {
 const _q2i = new THREE.Quaternion();
 function smooth(t) { return t * t * (3 - 2 * t); }
 
-// Preparation-phase drone (attackers).
+const SCAN_TIME = 1.1;   // seconds the reticle must stay on an enemy to identify them
+
+// Attacker drone: driven during the preparation phase, and again from the operator later (5 / X).
 export class Drone {
   constructor(game, pos, yaw) {
     this.game = game; this.pos = pos.clone(); this.yaw = yaw; this.pitch = -0.1; this.vel = new THREE.Vector3(); this.grounded = true;
@@ -601,6 +611,7 @@ export class Drone {
     this.mesh.add(body, wl, wr, eye); this.mesh.position.copy(pos); game.scene.add(this.mesh);
     this.light = new THREE.PointLight(0x30c0ff, 2, 3, 2); this.mesh.add(this.light);
     this.dead = false; this.jammed = false;
+    this.hover = null; this.scanT = 0; this.scanCooldown = 0; this._tick = 0; this.pingT = -9;
   }
   update(dt) {
     const sens = 0.0022; this.yaw -= Input.mouse.dx * sens; this.pitch = THREE.MathUtils.clamp(this.pitch - Input.mouse.dy * sens, -1.2, 1.2);
@@ -616,6 +627,23 @@ export class Drone {
     const jam = this.game.gadgets.isJammed(this.pos); this.jammed = jam;
     // wheel spin
     const sp = Math.hypot(this.vel.x, this.vel.z); this.mesh.children[1].rotation.x += sp * dt * 8; this.mesh.children[2].rotation.x += sp * dt * 8;
+    this._intel(dt);
   }
+  // Identify (hold X on an enemy) and contextual ping (Z) from the drone camera.
+  _intel(dt) {
+    const g = this.game; const me = g.player.char;
+    const origin = _v.copy(this.pos); origin.y += 0.2;
+    const dir = _v2.set(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
+    let hover = null, hd = 32;
+    for (const ch of g.characters) { if (ch.side === me.side || ch.dead) continue; const r = ch.raycast(origin, dir, hd); if (r && r.dist < hd && g.world.visible(origin, r.point)) { hover = ch; hd = r.dist; } }
+    this.hover = hover; this.scanCooldown = Math.max(0, this.scanCooldown - dt);
+    if (Input.down('scan') && hover && !this.jammed && this.scanCooldown <= 0) {
+      this.scanT += dt; this._tick += dt;
+      if (this._tick > 0.13) { this._tick = 0; g.audio.scanTick(this.scanT / SCAN_TIME); }
+      if (this.scanT >= SCAN_TIME) { g.identify(hover, me); this.scanT = 0; this.scanCooldown = 0.9; }
+    } else { this.scanT = Math.max(0, this.scanT - dt * 2.5); this._tick = 0; }
+    if (Input.hit('ping') && g.time - this.pingT > 0.6 && !this.jammed) { this.pingT = g.time; g.ping(origin.clone(), dir.clone(), me); }
+  }
+  get scanFrac() { return Math.min(1, this.scanT / SCAN_TIME); }
   dispose() { this.game.scene.remove(this.mesh); }
 }

@@ -6,8 +6,8 @@ import { wallTouchesRoom } from './Bot.js';
 // Also owns the defuser, reinforcement budget and the team-level AI plans for the round.
 
 export const Presets = {
-  casual: { name: 'QUICK MATCH', roundsToWin: 3, swapAfter: 2, prepTime: 45, actionTime: 180, bombTime: 45, plantTime: 7, defuseTime: 7 },
-  ranked: { name: 'RANKED', roundsToWin: 4, swapAfter: 3, prepTime: 45, actionTime: 180, bombTime: 45, plantTime: 7, defuseTime: 7 },
+  casual: { name: 'QUICK MATCH', roundsToWin: 3, swapAfter: 2, prepTime: 30, actionTime: 180, bombTime: 45, plantTime: 7, defuseTime: 7 },
+  ranked: { name: 'RANKED', roundsToWin: 4, swapAfter: 3, prepTime: 30, actionTime: 180, bombTime: 45, plantTime: 7, defuseTime: 7 },
   quick: { name: 'LIGHTNING', roundsToWin: 2, swapAfter: 1, prepTime: 20, actionTime: 120, bombTime: 40, plantTime: 6, defuseTime: 6 },
 };
 

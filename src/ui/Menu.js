@@ -8,6 +8,7 @@ import { Character } from '../game/Character.js';
 import { Weapon } from '../game/Weapon.js';
 import { AudioEngine } from '../core/AudioEngine.js';
 import { Input } from '../core/Input.js';
+import { getSprite } from '../map/Materials.js';
 
 // Front-end: home / play (custom game) / operators / shop / settings, the 3D menu backdrop
 // with posed operators, and the in-match operator select.
@@ -159,23 +160,38 @@ export class Menu {
 export class MenuScene {
   constructor(app) {
     this.app = app; this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(0x070a10);
-    this.scene.fog = new THREE.FogExp2(0x070a10, 0.045);
-    this.camera = new THREE.PerspectiveCamera(38, 1, 0.05, 200);
+    this.scene.fog = new THREE.FogExp2(0x070a10, 0.03);
+    this.camera = new THREE.PerspectiveCamera(34, 1, 0.05, 200);
     this.camera.position.set(0.6, 1.35, 4.2); this.camera.lookAt(0.6, 1.15, 0);
     this.time = 0; this.mode = 'trio';
     this.group = new THREE.Group(); this.scene.add(this.group);
     this.fake = { audio: { footstep() {} }, time: 0, noise: null, effects: null, onDBNO: null, onDeath: null };
-    this._lights(); this._skyline(); this._ground();
+    this._lights(); this._skyline(); this._bokeh(); this._ground();
     this.chars = []; this.single = null;
     this._buildTrio();
   }
   _lights() {
+    // studio-style night key light (cool white from the front-left), blue rim from the city behind, soft fills
     const s = this.scene;
-    s.add(new THREE.HemisphereLight(0x4a68c0, 0x101318, 1.1));
-    const key = new THREE.DirectionalLight(0xfff1dc, 3.4); key.position.set(3, 4, 5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.camera.left = -6; key.shadow.camera.right = 6; key.shadow.camera.top = 6; key.shadow.camera.bottom = -6; key.shadow.bias = -0.0005; s.add(key);
-    const rim = new THREE.DirectionalLight(0x4f8cff, 3.5); rim.position.set(-4, 3, -5); s.add(rim);
-    const fill = new THREE.PointLight(0x3b62c8, 30, 14, 2); fill.position.set(-2.5, 1.8, 2.5); s.add(fill);
-    const warm = new THREE.PointLight(0xffb070, 18, 12, 2); warm.position.set(3.5, 2.5, 2.5); s.add(warm);
+    s.add(new THREE.HemisphereLight(0x7f9bd8, 0x1a1c22, 1.5));
+    const key = new THREE.DirectionalLight(0xe8f0ff, 4.6); key.position.set(-2.2, 4.2, 4.5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.camera.left = -6; key.shadow.camera.right = 6; key.shadow.camera.top = 6; key.shadow.camera.bottom = -6; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.02; s.add(key);
+    const fill = new THREE.DirectionalLight(0xbfd0f0, 1.6); fill.position.set(3.5, 2, 3); s.add(fill);
+    const rim = new THREE.DirectionalLight(0x5c9dff, 5.0); rim.position.set(-3, 3.5, -5); s.add(rim);
+    const rim2 = new THREE.DirectionalLight(0xffc890, 2.2); rim2.position.set(4, 2.5, -4); s.add(rim2);
+    const warm = new THREE.PointLight(0xffb070, 14, 12, 2); warm.position.set(3.5, 2.5, 1.5); s.add(warm);
+    const cool = new THREE.PointLight(0x3b62c8, 22, 14, 2); cool.position.set(-3, 1.6, 2.0); s.add(cool);
+  }
+  // out-of-focus city lights behind the operators
+  _bokeh() {
+    const g = new THREE.Group(); const tex = getSprite('glow');
+    for (let i = 0; i < 90; i++) {
+      const warmC = Math.random() < 0.55;
+      const col = warmC ? new THREE.Color().setHSL(0.08 + Math.random() * 0.06, 0.9, 0.55 + Math.random() * 0.2) : new THREE.Color().setHSL(0.55 + Math.random() * 0.1, 0.8, 0.6 + Math.random() * 0.2);
+      const m = new THREE.SpriteMaterial({ map: tex, color: col, transparent: true, opacity: 0.25 + Math.random() * 0.45, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+      const sp = new THREE.Sprite(m); const z = -18 - Math.random() * 40; const sc = (0.5 + Math.random() * 1.6) * (1 + (-z - 18) / 40);
+      sp.position.set((Math.random() - 0.5) * 70, -0.5 + Math.random() * 14, z); sp.scale.setScalar(sc); g.add(sp);
+    }
+    this.scene.add(g); this.bokeh = g;
   }
   _skyline() {
     const g = new THREE.Group(); const winTex = this._windowTexture();
@@ -207,11 +223,12 @@ export class MenuScene {
   _buildTrio() {
     for (const c of this.chars) this.group.remove(c.root); this.chars = [];
     const s = this.app.settings;
-    const picks = ['ash', 'thatcher', 'rook'];
+    // like the home screen: the centre operator closest to the camera, flanked by two slightly behind
+    const picks = ['thatcher', 'ash', 'rook'];
     const lo = id => (s.loadouts && s.loadouts[id] && s.loadouts[id].primary) || OperatorById[id].primaries[0];
-    this.chars.push(this._makeChar(picks[0], -0.35, 0.45, Math.PI - 0.3, lo(picks[0])));
-    this.chars.push(this._makeChar(picks[1], 0.82, 0.0, Math.PI + 0.05, lo(picks[1])));
-    this.chars.push(this._makeChar(picks[2], 1.95, 0.55, Math.PI + 0.4, lo(picks[2])));
+    this.chars.push(this._makeChar(picks[0], -0.3, -0.25, Math.PI - 0.28, lo(picks[0])));
+    this.chars.push(this._makeChar(picks[1], 0.85, 0.3, Math.PI + 0.04, lo(picks[1])));
+    this.chars.push(this._makeChar(picks[2], 2.0, -0.35, Math.PI + 0.3, lo(picks[2])));
     this.chars[1].pitch = -0.02; this.applySkin();
   }
   setMode(mode, opId) {
@@ -237,8 +254,10 @@ export class MenuScene {
       this.camera.position.set(-0.55 - aspectShift * 0.4, 1.35, 2.35); this.camera.lookAt(-0.05 - aspectShift * 0.4, 1.2, 0);
       if (this.single) { this.single.yaw = Math.PI + 0.35 + Math.sin(this.time * 0.3) * 0.05; this.single.updateBody(dt, this.camera); }
     } else {
-      this.camera.position.set(0.9 + Math.sin(this.time * 0.11) * 0.05, 1.25 + Math.sin(this.time * 0.17) * 0.02, 4.0); this.camera.lookAt(0.9, 1.05, 0);
-      this.chars.forEach((c, i) => { c.pitch = -0.04 + Math.sin(this.time * 0.5 + i) * 0.01; c.updateBody(dt, this.camera); });
+      // waist-up framing with a slow drift
+      const wide = Math.max(0, (w / h - 1.6)) * 0.3;
+      this.camera.position.set(0.86 + Math.sin(this.time * 0.11) * 0.04, 1.36 + Math.sin(this.time * 0.17) * 0.015, 2.75 + wide); this.camera.lookAt(0.86, 1.28, 0);
+      this.chars.forEach((c, i) => { c.pitch = -0.03 + Math.sin(this.time * 0.5 + i) * 0.01; c.yaw += Math.sin(this.time * 0.23 + i * 2) * 0.0004; c.updateBody(dt, this.camera); });
     }
   }
 }

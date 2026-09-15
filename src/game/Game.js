@@ -19,6 +19,7 @@ import { Match, Presets } from './Match.js';
 import { HUD } from '../ui/HUD.js';
 import { Operators, OperatorById, Gadgets as GadgetDefs, SecondaryGadgets } from '../data/operators.js';
 import { Skins } from '../ui/Menu.js';
+import { BARRICADE_BUILD_TIME } from '../map/Level.js';
 
 // Match orchestrator: scene/lighting/post-processing, level lifecycle per round, players
 // and bots, interactions, event routing between systems, and the render loop.
@@ -58,6 +59,7 @@ export class Game {
     this._post();
     this.playerOp = null; this.playerLoadout = null;
     this.stats = { kills: 0, deaths: 0, headshots: 0 };
+    this.pings = [];   // contextual pings: { kind: 'yellow' | 'enemy', pos, t, label, by }
   }
 
   // ---------- scene setup ----------
@@ -111,6 +113,8 @@ export class Game {
     this.level = buildBorder(this.world, this.scene);
     this.level.onCellDestroyed = (wall, cell) => { this.effects.wallDebris(cell.center, wall.normal, 'drywall'); };
     this.level.onWallChanged = (wall) => { };
+    this.level.onBarricadeKnock = (b, pos, fp) => { this.audio.knock(pos, !!fp); };
+    this.level.onBarricadeChunk = (pos, normal) => { this.effects.wallDebris(pos, normal || new THREE.Vector3(0, 0, 1), 'wood'); };
     this.nav = new NavGrid(this.world, new THREE.Box3(new THREE.Vector3(-16, 0, -14), new THREE.Vector3(48, 8, 42)), this.level.floorYs);
     if (this.effects) this.effects.level = this.level;
     if (this.gadgets) this.gadgets.reset();
@@ -162,7 +166,8 @@ export class Game {
       if (c.bot) { c.bot.planBuilt = false; c.bot.plan = []; c.bot.atkPlan = null; c.bot.holdSpot = null; c.bot.coverSpot = null; c.bot.guardSpot = null; }
     }
     this.hud.refreshGadgets();
-    // attacker player: drone phase
+    // attacker player: the preparation phase is played from the drone (two drones per round, like Siege)
+    this.player.dronesLeft = 2; this.pings.length = 0;
     if (this.player.side === 'atk') this.enterDrone(atkSpawn.pos);
     this.hud.drone(this.player.usingDrone);
     this.audio.ambience(false);
@@ -181,13 +186,52 @@ export class Game {
   }
   enterDrone(pos) {
     const P = this.player; if (P.drone) P.drone.dispose();
-    const p = pos.clone(); p.y = 0.1; P.drone = new Drone(this, p, Math.atan2(-(16 - p.x), -(11 - p.z))); P.usingDrone = true; this.hud.drone(true);
-    this.hud.toast('DRONE DEPLOYED — X TO RETURN', 3);
+    const p = pos.clone(); p.y = 0.1; P.drone = new Drone(this, p, Math.atan2(-(16 - p.x), -(11 - p.z))); P.usingDrone = true; P.dronesLeft = Math.max(0, P.dronesLeft - 1); this.hud.drone(true);
+    this.hud.toast('DRONE DEPLOYED — HOLD X TO IDENTIFY · Z TO PING', 3.5);
+  }
+  // throw out a fresh drone from the operator's hands (action phase)
+  deployDrone() {
+    const P = this.player; const C = P.char; if (P.dronesLeft <= 0) { this.hud.toast('NO DRONES LEFT', 1.5); return; }
+    const fwd = C.forwardFlat(new THREE.Vector3()); const eye = C.eyePos(new THREE.Vector3());
+    const h = this.world.raycast(eye, fwd, 1.0, { filter: c => c.solid }); const d = h ? Math.max(0.2, h.dist - 0.25) : 0.9;
+    const p = C.pos.clone().addScaledVector(fwd, d); p.y = C.pos.y + 0.15;
+    if (P.drone) P.drone.dispose();
+    P.drone = new Drone(this, p, C.yaw); P.drone.vel.copy(fwd).multiplyScalar(3.5); P.drone.vel.y = 1.5;
+    P.dronesLeft--; P.usingDrone = true; this.hud.drone(true); this.audio.click('ui'); this.hud.toast('DRONE DEPLOYED', 1.5); this.noise(C, 10);
   }
   exitDrone() { const P = this.player; P.usingDrone = false; this.hud.drone(false); }
   onActionPhase() {
-    const P = this.player; if (P.usingDrone) this.exitDrone(); if (P.drone) { P.drone.dispose(); P.drone = null; }
+    // attackers return to their operators; the drone stays in the world (5 / X to check it again, 6 for a new one)
+    const P = this.player; if (P.usingDrone) this.exitDrone();
+    if (P.side === 'atk') this.hud.toast('5 / X — DRONE VIEW · 6 — DEPLOY DRONE', 3);
     this.hud.refreshGadgets();
+  }
+  _droneControls() {
+    const P = this.player; const M = this.match; const C = P.char;
+    if (P.side !== 'atk' || C.dead || C.dbno) { if (P.usingDrone) this.exitDrone(); return; }
+    if (M.phase === 'prep') { if (P.drone && !P.usingDrone) { P.usingDrone = true; this.hud.drone(true); } if (Input.hit('droneExit')) this.hud.toast('OPERATORS DEPLOY WHEN THE ACTION PHASE STARTS', 1.6); return; }
+    if (P.usingDrone) { if (Input.hit('droneExit')) { this.exitDrone(); this.audio.click('back'); } return; }
+    if (P.interaction || P.rappel || P.vault) return;
+    if (Input.hit('drone')) { if (P.drone && !P.drone.dead) { P.usingDrone = true; this.hud.drone(true); this.audio.click('ui'); } else if (P.dronesLeft > 0) this.deployDrone(); else this.hud.toast('NO DRONES LEFT', 1.5); }
+    else if (Input.hit('deployDrone')) this.deployDrone();
+  }
+  // Contextual ping from a camera ray: enemy under the reticle → red "enemy spotted", otherwise a yellow world ping.
+  ping(origin, dir, by) {
+    const max = 50; let best = null;
+    for (const ch of this.characters) { if (ch.side === by.side || ch.dead) continue; const r = ch.raycast(origin, dir, max); if (r && (!best || r.dist < best.r.dist)) best = { ch, r }; }
+    const h = this.world.raycast(origin, dir, max, { filter: c => c.solid || c.tag === 'glass' });
+    if (best && (!h || h.dist > best.r.dist - 0.05)) {
+      const ch = best.ch; const pos = ch.pos.clone(); pos.y += 1.3;
+      this.pings.push({ kind: 'enemy', pos, t: 5, label: 'ENEMY', by });
+      this.audio.ping('enemy'); this.teamAlert(by.side, ch, ch.pos); if (by.isPlayer) this.hud.toast('ENEMY SPOTTED', 1.2);
+    } else if (h) { this.pings.push({ kind: 'yellow', pos: h.point.clone().addScaledVector(h.normal, 0.05), t: 6, label: '', by }); this.audio.ping('yellow'); }
+    else { const pos = origin.clone().addScaledVector(dir, 30); this.pings.push({ kind: 'yellow', pos, t: 4, label: '', by }); this.audio.ping('yellow'); }
+  }
+  // Drone identification: the enemy is marked live for the whole team for a few seconds.
+  identify(ch, by) {
+    ch.pingedUntil = this.time + 3.5; ch.identifiedT = this.time;
+    this.audio.identify(); this.teamAlert(by.side, ch, ch.pos);
+    if (by.isPlayer) this.hud.toast('IDENTIFIED — ' + ch.name, 1.8);
   }
 
   // ---------- interactions ----------
@@ -206,7 +250,7 @@ export class Game {
     const its = this.level.findInteractable(eye, dir, C.side, 2.3);
     for (const it of its) {
       if (it.type === 'reinforce' && M.reinforcementsLeft > 0 && (M.phase === 'prep' || M.phase === 'action' || M.phase === 'planted')) { out.push({ label: 'REINFORCE WALL', dur: 5, start: () => { it.stop = this.audio.tool('reinforce', it.wall.center, 5); }, done: () => { M.reinforce(it.wall, C); this.effects.impact(it.point, it.normal, 'metal'); }, cancel: () => it.stop && it.stop() }); break; }
-      if (it.type === 'barricade') { out.push({ label: 'BARRICADE', dur: 1.6, start: () => { it.stop = this.audio.tool('barricade', new THREE.Vector3(it.slot.x, it.slot.y + 1, it.slot.z), 1.6); }, done: () => { it.slot.barricade.build(); this.noise(C, 20); }, cancel: () => it.stop && it.stop() }); break; }
+      if (it.type === 'barricade') { const b = it.slot.barricade; out.push({ label: 'BARRICADE', dur: BARRICADE_BUILD_TIME, start: () => { b.beginBuild(C.pos, true); this.noise(C, 20); }, progress: (t, dt) => b.setProgress(t, dt), hand: (out) => b.handPoint(out), done: () => { b.finish(); }, cancel: () => b.cancelBuild() }); break; }
       if (it.type === 'hatchReinforce' && M.reinforcementsLeft > 0) { out.push({ label: 'REINFORCE HATCH', dur: 3.5, start: () => { it.stop = this.audio.tool('reinforce', it.hatch.center, 3.5); }, done: () => { if (it.hatch.reinforce()) { M.reinforcementsLeft--; this.hud.refreshGadgets(); } }, cancel: () => it.stop && it.stop() }); break; }
     }
     return out;
@@ -252,7 +296,10 @@ export class Game {
     if (M.phase === 'opselect' || M.phase === 'matchEnd') return;
     const P = this.player;
     // drone toggle
-    if (M.phase === 'prep' && P.side === 'atk' && Input.hit('drone') && !P.char.dead) { if (P.usingDrone) this.exitDrone(); else if (P.drone) { P.usingDrone = true; this.hud.drone(true); } }
+    this._droneControls();
+    for (let i = this.pings.length - 1; i >= 0; i--) { const pg = this.pings[i]; pg.t -= dt; if (pg.t <= 0) this.pings.splice(i, 1); }
+    // operator ping (M): the drone handles its own
+    if (!P.usingDrone && !P.char.dead && !P.char.dbno && Input.pressed.has('KeyM') && this.time - (this._pingT || -9) > 0.6) { this._pingT = this.time; this.ping(this.camera.getWorldPosition(new THREE.Vector3()), this.camera.getWorldDirection(new THREE.Vector3()), P.char); }
     if (Input.hit('scoreboard')) this.hud.scoreboard(true); if (Input.up('scoreboard')) this.hud.scoreboard(false);
     this.nav.flush();
     this._cullLights(dt);

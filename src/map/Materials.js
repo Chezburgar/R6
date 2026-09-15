@@ -102,6 +102,14 @@ const recipes = {
     const tint = 0.9 + (hash(p, 9) - 0.5) * 0.2; const gap = (pv < 0.03 || pv > 0.97) ? 0.5 : 1;
     o.r = (178 + grain * 50) * tint * gap; o.g = (140 + grain * 45) * tint * gap; o.b = (96 + grain * 30) * tint * gap; o.h = grain * 0.4 + gap * 0.6;
   } },
+  // One barricade board: u across the board (rounded, darker edges), v along the grain. Pale pine with knots and dirt.
+  barricade: { size: 256, repeat: 1, roughness: 0.78, metalness: 0, normalStrength: 1.8, fn: (u, v, o) => {
+    const grain = fbm(u * 2.5 + 3, v * 70, 4) * 0.55 + fbm(u * 14, v * 6, 2) * 0.3 + Math.sin(v * 220 + fbm(u * 4, v * 3, 2) * 6) * 0.08;
+    const knot = Math.max(0, 1 - Math.hypot((u - 0.62) * 2.2, (v - 0.31) * 1.4) * 9) + Math.max(0, 1 - Math.hypot((u - 0.3) * 2.2, (v - 0.78) * 1.4) * 11);
+    const edge = Math.min(1, Math.min(u, 1 - u) * 14); const dirt = Math.max(0, fbm(u * 3 + 9, v * 5 + 2, 3) - 0.58) * 1.6;
+    const shade = (0.72 + edge * 0.28) * (1 - knot * 0.45) * (1 - dirt * 0.45);
+    o.r = (188 + grain * 44) * shade; o.g = (156 + grain * 40) * shade; o.b = (114 + grain * 30) * shade; o.h = grain * 0.5 + edge * 0.4 - knot * 0.3;
+  } },
   plank: { size: 256, repeat: 1, roughness: 0.8, metalness: 0, normalStrength: 1.6, fn: (u, v, o) => {
     const grain = fbm(u * 2, v * 60, 4) * 0.6 + fbm(u * 20, v * 4, 2) * 0.4;
     o.r = 150 + grain * 50; o.g = 112 + grain * 40; o.b = 72 + grain * 25; o.h = grain;
