@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rainbow Six Siege — Browser</title>
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/ui.css">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="ui"></div>
+<div id="boot">
+  <div class="boot-inner">
+    <div class="boot-logo"><span class="tc">TOM CLANCY'S</span><span class="r6">RAINBOW<em>SIX</em>SIEGE</span></div>
+    <div class="boot-bar"><div id="boot-fill"></div></div>
+    <div id="boot-status">INITIALIZING</div>
+    <div class="boot-tip" id="boot-tip">Headshots are lethal regardless of health. Reinforce walls during the preparation phase.</div>
+  </div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

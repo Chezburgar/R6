@@ -1,0 +1,8 @@
+# raw source models (330 MB) stay local; the optimized copies in assets/models are what ships
+Operator models/
+Weapon models/
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+reference images/
