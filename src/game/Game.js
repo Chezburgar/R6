@@ -103,7 +103,7 @@ export class Game {
   }
   resize(w, h) {
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.vmCamera.aspect = w / h; this.vmCamera.updateProjectionMatrix();
-    if (this.composer) { this.composer.setSize(w, h); this.smaa.setSize(w * this.renderer.getPixelRatio(), h * this.renderer.getPixelRatio()); }
+    if (this.composer) { this.composer.setPixelRatio(this.renderer.getPixelRatio()); this.composer.setSize(w, h); this.smaa.setSize(w * this.renderer.getPixelRatio(), h * this.renderer.getPixelRatio()); }
   }
 
   // ---------- level lifecycle ----------
@@ -315,6 +315,7 @@ export class Game {
     this.audio.updateListener(this.camera.position, fwd, up); this.audio.interior = this.level.isInterior(this.camera.position);
     this._ambT = (this._ambT || 0) + dt; if (this._ambT > 1) { this._ambT = 0; this.audio.ambience(this.audio.interior); }
     this.hud.update(dt);
+    if (M.site) for (const b of M.site.bombs) if (b.device) { const on = Math.sin(this.time * 4 + (b.label === 'A' ? 0 : 1.5)) > 0.6; b.device.userData.led.material.emissiveIntensity = on ? 5 : 0.4; b.device.userData.light.intensity = on ? 1.6 : 0.15; }
     // defuser led blink
     if (M.defuser) { const led = M.defuser.mesh.userData.led; if (led) led.material.emissiveIntensity = (Math.sin(this.time * (6 + (1 - M.timeLeft / M.s.bombTime) * 20)) > 0) ? 5 : 0.3; }
   }

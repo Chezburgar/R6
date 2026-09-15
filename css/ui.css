@@ -157,6 +157,11 @@ input[type=text]:focus{border-color:var(--line-h)}
 .hud-team i{width:22px;height:8px;background:#fff;opacity:.9;transform:skewX(-18deg)}
 .hud-team i.dead{background:rgba(255,255,255,.18)}
 .hud-team i.dbno{background:#f2c14e}
+.hud-team i{position:relative}
+.hud-team i.defuser::after{content:"D";position:absolute;left:50%;top:-14px;transform:translateX(-50%) skewX(18deg);font-size:9px;font-weight:700;color:#fff;font-style:normal;letter-spacing:0}
+.defuser-btn{display:inline-flex;align-items:center;gap:8px}
+.defuser-btn svg{width:22px;height:22px}
+.defuser-btn.on{background:var(--atk);color:#fff;border-color:var(--atk)}
 .hud-team.atk i{background:var(--atk)}.hud-team.atk i.dead{background:rgba(233,131,43,.2)}
 .hud-team.def i{background:var(--def)}.hud-team.def i.dead{background:rgba(62,163,232,.2)}
 .hud-timer{font-size:30px;font-weight:600;letter-spacing:.06em;min-width:80px;text-align:center;text-shadow:0 2px 6px #000;line-height:1}

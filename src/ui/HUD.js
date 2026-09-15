@@ -109,7 +109,7 @@ export class HUD {
     // teams
     const atk = g.characters.filter(c => c.side === 'atk'), def = g.characters.filter(c => c.side === 'def');
     const left = M.playerSide === 'atk' ? atk : def, right = M.playerSide === 'atk' ? def : atk;
-    const pips = arr => arr.map(c => `<i class="${c.dead ? 'dead' : c.dbno ? 'dbno' : ''}"></i>`).join('');
+    const pips = arr => arr.map(c => `<i class="${c.dead ? 'dead' : c.dbno ? 'dbno' : ''} ${c.hasDefuser ? 'defuser' : ''}" title="${c.name}"></i>`).join('');
     const L = this.$('hud-teamL'), R = this.$('hud-teamR'); L.className = 'hud-team ' + M.playerSide; R.className = 'hud-team ' + (M.playerSide === 'atk' ? 'def' : 'atk'); L.innerHTML = pips(left); R.innerHTML = pips(right);
     this.$('hud-score').innerHTML = `<b>${M.score.A}</b> — <b>${M.score.B}</b>`;
     // health
@@ -163,7 +163,7 @@ export class HUD {
     if (P.drone && !P.usingDrone && P.side === 'atk') { const p = P.drone.pos.clone(); p.y += 0.4; place('mydrone', 'drone', p, 'DRONE', p.distanceTo(eye), false); }
     for (const ch of g.characters) {
       if (ch === C || ch.dead) continue;
-      if (ch.side === C.side) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('ally' + ch.op.id, 'ally ' + ch.side + (ch.dbno ? ' dbno' : ''), p, ch.name + (ch.dbno ? ' — DOWNED' : ''), undefined, false); }
+      if (ch.side === C.side) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('ally' + ch.op.id, 'ally ' + ch.side + (ch.dbno ? ' dbno' : ''), p, ch.name + (ch.dbno ? ' — DOWNED' : ch.hasDefuser ? ' — DEFUSER' : ''), undefined, false); }
       else if (ch.pingedUntil > g.time || (ch.scanned > g.time)) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('enemy' + ch.op.id, 'scan', p, ch.name, p.distanceTo(eye), true); }
     }
     for (const [k, m] of this.markers) if (!used.has(k)) m.style.display = 'none';

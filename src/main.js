@@ -15,7 +15,7 @@ const MANIFEST = {
 const TIPS = ['Headshots are lethal regardless of health.', 'Reinforce walls during the preparation phase — you have 10 per team.', 'Soft walls can be shot through. Bullets lose damage with every surface they penetrate.', 'Hold F on a soft wall as a defender to reinforce it. Thermite burns through reinforcements.', 'Downed operators can be revived by teammates — finish them or cover the body.', 'Attackers can rappel exterior walls: press F facing a wall from outside.', 'Bandit\'s shock wire destroys Thermite charges on contact. Thatcher\'s EMP disables it.', 'Lean with Q and E to peek corners without exposing your body.', 'Press B to switch fire mode. Semi-auto is easier to control at range.', 'The defuser must be planted inside a bomb site. Defenders have 45 seconds to disable it.'];
 
 const DEFAULTS = {
-  name: 'Operator', renown: 148560, credits: 1200, sens: 6, adsSens: 75, fov: 74, shadows: 'high', bloom: true, master: 0.8, sfx: 1, ui: 0.7, ambience: 0.6, invertY: false, skin: 'default', quality: 'high',
+  name: 'Operator', renown: 148560, credits: 1200, sens: 6, adsSens: 75, fov: 74, shadows: 'high', bloom: true, master: 0.8, sfx: 1, ui: 0.7, ambience: 0.6, music: 0.6, invertY: false, skin: 'default', quality: 'high',
   game: { preset: 'casual', side: 'atk', site: 'random', difficulty: 'normal' }, loadouts: {}, career: { matches: 0, wins: 0, kills: 0, deaths: 0, headshots: 0 },
 };
 
@@ -37,7 +37,7 @@ class App {
   }
   loadSettings() { try { const s = JSON.parse(localStorage.getItem('r6.settings') || '{}'); return { ...DEFAULTS, ...s, game: { ...DEFAULTS.game, ...(s.game || {}) }, career: { ...DEFAULTS.career, ...(s.career || {}) } }; } catch (e) { return { ...DEFAULTS }; } }
   saveSettings() { try { localStorage.setItem('r6.settings', JSON.stringify(this.settings)); } catch (e) {} this.applyAudioSettings(); }
-  applyAudioSettings() { const s = this.settings; AudioEngine.setVolume('master', s.master); AudioEngine.setVolume('sfx', s.sfx); AudioEngine.setVolume('ui', s.ui); AudioEngine.setVolume('ambience', s.ambience); }
+  applyAudioSettings() { const s = this.settings; AudioEngine.setVolume('master', s.master); AudioEngine.setVolume('sfx', s.sfx); AudioEngine.setVolume('ui', s.ui); AudioEngine.setVolume('ambience', s.ambience); AudioEngine.setVolume('music', s.music === undefined ? 0.6 : s.music); }
 
   async boot() {
     const fill = document.getElementById('boot-fill'), status = document.getElementById('boot-status'), tip = document.getElementById('boot-tip');
@@ -54,9 +54,11 @@ class App {
     this.opSelect = new OperatorSelect(this, this.uiRoot, this.menu);
     const boot = document.getElementById('boot');
     const btn = document.createElement('button'); btn.className = 'btn primary start'; btn.textContent = 'PRESS TO START'; boot.querySelector('.boot-inner').appendChild(btn); boot.classList.add('ready');
-    const start = () => { AudioEngine.init(); this.applyAudioSettings(); AudioEngine.click('ui'); AudioEngine.menuMusic(true); boot.classList.add('out'); setTimeout(() => boot.remove(), 700); this.mode = 'menu'; this.menu.showPage('home'); };
+    let started = false;
+    const once = (e) => { if (e.code === 'Enter' || e.code === 'Space') start(); };
+    const start = () => { if (started) return; started = true; window.removeEventListener('keydown', once); AudioEngine.init(); this.applyAudioSettings(); AudioEngine.click('ui'); AudioEngine.menuMusic(true); boot.classList.add('out'); setTimeout(() => boot.remove(), 700); this.mode = 'menu'; this.menu.showPage('home'); };
     btn.addEventListener('click', start);
-    window.addEventListener('keydown', function once(e) { if (e.code === 'Enter' || e.code === 'Space') { window.removeEventListener('keydown', once); start(); } });
+    window.addEventListener('keydown', once);
     this.resize();
     this.loop();
   }
@@ -70,6 +72,7 @@ class App {
     const gs = this.settings.game;
     if (this.game) { this.game.dispose(); this.game = null; }
     this.menu.hide(); AudioEngine.menuMusic(false);
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     this.game = new Game(this, this.settings, gs);
     this.game.resize(window.innerWidth, window.innerHeight);
     this.mode = 'game';
@@ -81,8 +84,9 @@ class App {
     g.hud.show(false); Input.unlock(); Input.wantLock = false;
     this.mode = 'opselect';
     const prev = g.playerOp && g.playerOp.side === side ? g.playerOp.id : null;
-    this.opSelect.open(side, [], prev, (opId, loadout) => {
+    this.opSelect.open(side, [], prev, (opId, loadout, extra) => {
       g.setupTeams(opId, loadout);
+      g.playerWantsDefuser = !!(extra && extra.defuser);
       g.match.startRound();
       g.hud.show(true); this.mode = 'game'; Input.wantLock = true; Input.lock();
       this.showClickToPlay();
@@ -145,6 +149,7 @@ class App {
       <div><div class="label">EFFECTS VOLUME</div><input type="range" id="s-sfx" min="0" max="1" step="0.05" value="${s.sfx}"></div>
       <div><div class="label">UI VOLUME</div><input type="range" id="s-ui" min="0" max="1" step="0.05" value="${s.ui}"></div>
       <div><div class="label">AMBIENCE VOLUME</div><input type="range" id="s-amb" min="0" max="1" step="0.05" value="${s.ambience}"></div>
+      <div><div class="label">MENU MUSIC VOLUME</div><input type="range" id="s-music" min="0" max="1" step="0.05" value="${s.music === undefined ? 0.6 : s.music}"></div>
     </div>`;
     const o = this.overlay('SETTINGS', html, [{ label: 'DONE', primary: true, fn: () => { this.closeOverlay(); this.applySettings(); onClose && onClose(); } }]);
     const q = id => o.querySelector('#' + id);
@@ -153,7 +158,7 @@ class App {
     q('s-ads').addEventListener('input', e => { s.adsSens = +e.target.value; q('v-ads').textContent = s.adsSens; this.saveSettings(); this.applySettings(); });
     q('s-fov').addEventListener('input', e => { s.fov = +e.target.value; q('v-fov').textContent = s.fov; this.saveSettings(); this.applySettings(); });
     for (const [id, key, conv] of [['s-shadows', 'shadows', v => v], ['s-bloom', 'bloom', v => v === '1'], ['s-quality', 'quality', v => v], ['s-invert', 'invertY', v => v === '1']]) q(id).querySelectorAll('button').forEach(b => b.addEventListener('click', () => { s[key] = conv(b.dataset.v); q(id).querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); this.saveSettings(); this.applySettings(); }));
-    for (const [id, key] of [['s-master', 'master'], ['s-sfx', 'sfx'], ['s-ui', 'ui'], ['s-amb', 'ambience']]) q(id).addEventListener('input', e => { s[key] = +e.target.value; this.saveSettings(); });
+    for (const [id, key] of [['s-master', 'master'], ['s-sfx', 'sfx'], ['s-ui', 'ui'], ['s-amb', 'ambience'], ['s-music', 'music']]) q(id).addEventListener('input', e => { s[key] = +e.target.value; this.saveSettings(); });
   }
   applySettings() {
     const s = this.settings; this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, s.quality === 'ultra' ? 2 : s.quality === 'high' ? 1.5 : 1)); this.resize();

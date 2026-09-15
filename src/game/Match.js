@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Operators } from '../data/operators.js';
 import { wallTouchesRoom } from './Bot.js';
+import { Collider } from '../core/Physics.js';
 
 // Round/match state machine: operator select → preparation → action → planted → round end.
 // Also owns the defuser, reinforcement budget and the team-level AI plans for the round.
@@ -36,9 +37,15 @@ export class Match {
     g.resetLevel(); g.gadgets.reset();
     // site: chosen or random
     const sites = g.level.sites; this.site = this.s.site && this.s.site !== 'random' ? sites.find(s => s.id === this.s.site) : sites[Math.floor(Math.random() * sites.length)];
-    this.site.bombs.forEach(b => b.planted = false);
+    this.site.bombs.forEach(b => { b.planted = false; b.device = this._bombDevice(b); });
     g.defensePlan = new DefensePlan(g, this.site); g.attackPlan = new AttackPlan(g, this.site);
     g.spawnAll();
+    // the defuser: whoever picked it up in operator select, otherwise a random attacker
+    const atk = g.characters.filter(c => c.side === 'atk');
+    const pl = atk.find(c => c.isPlayer);
+    const holder = (pl && g.playerWantsDefuser) ? pl : atk[Math.floor(Math.random() * atk.length)];
+    if (holder) holder.hasDefuser = true;
+    g.hud.refreshGadgets();
     this.phase = 'prep'; this.timeLeft = this.s.prepTime;
     g.hud.phase('PREPARATION PHASE', this.site.name);
     g.hud.big(this.playerSide === 'atk' ? 'LOCATE THE OBJECTIVE' : 'SECURE THE SITE', this.playerSide === 'atk' ? 'ATTACKERS' : 'DEFENDERS', 3);
@@ -76,11 +83,8 @@ export class Match {
     g.onActionPhase();
     g.hud.phase('ACTION PHASE', this.site.name);
     g.hud.big(this.playerSide === 'atk' ? 'PLANT THE DEFUSER' : 'DEFEND THE OBJECTIVE', this.site.name, 3);
-    // defuser holder: player if attacking, else random bot
-    const atk = g.characters.filter(c => c.side === 'atk' && !c.dead);
-    // like Siege, the defuser goes to a random attacker (the player half the time so it stays hands-on)
-    const pl = atk.find(c => c.isPlayer); const holder = (pl && Math.random() < 0.5) ? pl : atk[Math.floor(Math.random() * atk.length)];
-    if (holder) { holder.hasDefuser = true; if (holder.isPlayer) g.hud.toast('YOU ARE CARRYING THE DEFUSER'); }
+    const holder = g.characters.find(c => c.side === 'atk' && c.hasDefuser);
+    if (holder && this.playerSide === 'atk') g.hud.toast(holder.isPlayer ? 'YOU ARE CARRYING THE DEFUSER' : holder.name + ' IS CARRYING THE DEFUSER', 3);
   }
   _checkElimination() {
     const g = this.game;
@@ -111,6 +115,31 @@ export class Match {
     g.audio.beep(pos, 3200, 0.3, 0.6); g.noise && g.noise(ch, 80);
     if (ch.isPlayer) ch.score += 100;
     for (const c of g.characters) if (c.bot) { c.bot.stop(); c.bot.stateT = 99; }
+  }
+  // The bomb itself: a hard case with a canister, warning stripes and a blinking red light, sitting in the site.
+  _bombDevice(b) {
+    const g = this.game; const gr = new THREE.Group();
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1b1d21, roughness: 0.55, metalness: 0.5 });
+    const steel = new THREE.MeshStandardMaterial({ color: 0x6d7076, roughness: 0.35, metalness: 0.9 });
+    const stripe = new THREE.MeshStandardMaterial({ color: 0xe0b020, roughness: 0.6, metalness: 0.1, emissive: 0x5a4000, emissiveIntensity: 0.4 });
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.42, 0.55), dark); box.position.y = 0.21; box.castShadow = true; box.receiveShadow = true; gr.add(box);
+    for (const x of [-0.3, 0.3]) { const band = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.44, 0.57), stripe); band.position.set(x, 0.21, 0); gr.add(band); }
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.06, 0.5), steel); lid.position.y = 0.45; gr.add(lid);
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.5, 20), steel); can.rotation.z = Math.PI / 2; can.position.set(0.05, 0.62, 0); can.castShadow = true; gr.add(can);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.06, 20), dark); cap.rotation.z = Math.PI / 2; cap.position.set(-0.22, 0.62, 0); gr.add(cap);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.04), new THREE.MeshStandardMaterial({ color: 0x0b1420, emissive: 0x1f6fd0, emissiveIntensity: 1.2 })); panel.position.set(0.28, 0.6, 0.2); panel.rotation.x = -0.35; gr.add(panel);
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 10), new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xff2020, emissiveIntensity: 4 })); led.position.set(0.42, 0.5, 0.22); gr.add(led); gr.userData.led = led;
+    const light = new THREE.PointLight(0xff3020, 1.2, 3.5, 2); light.position.set(0.4, 0.7, 0.2); gr.add(light); gr.userData.light = light;
+    for (const z of [-0.2, 0.2]) { const wire = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.008, 6, 16, Math.PI), new THREE.MeshStandardMaterial({ color: 0xaa2020, roughness: 0.7 })); wire.position.set(-0.35, 0.48, z); wire.rotation.y = Math.PI / 2; gr.add(wire); }
+    // "A" / "B" stencil on the lid
+    const c = document.createElement('canvas'); c.width = 128; c.height = 128; const x = c.getContext('2d'); x.fillStyle = 'rgba(0,0,0,0)'; x.fillRect(0, 0, 128, 128); x.fillStyle = '#e8e8e8'; x.font = 'bold 96px Barlow Condensed, Arial'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(b.label, 64, 70);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.26), new THREE.MeshBasicMaterial({ map: tex, transparent: true })); tag.rotation.x = -Math.PI / 2; tag.position.set(-0.28, 0.485, 0); gr.add(tag);
+    gr.position.copy(b.pos); gr.position.y += 0.01; gr.rotation.y = b.label === 'A' ? 0.4 : -0.6; gr.scale.setScalar(1.3);
+    g.level.dynamicGroup.add(gr);
+    // solid so it blocks movement and bullets like a prop
+    const hw = 0.62, hd = 0.4; gr.userData.col = g.world.add(new Collider(new THREE.Vector3(b.pos.x - hw, b.pos.y, b.pos.z - hd), new THREE.Vector3(b.pos.x + hw, b.pos.y + 0.98, b.pos.z + hd), { material: 'metal', tag: 'prop', floor: b.room.floor }));
+    return gr;
   }
   _defuserMesh(pos) {
     const gr = new THREE.Group();

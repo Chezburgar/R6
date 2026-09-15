@@ -36,7 +36,7 @@ class InputClass {
       // blur → pointer lock lost), Ctrl combos (find/save/bookmark dialogs)
       if (e.code === 'Tab' || e.code === 'AltLeft' || e.code === 'AltRight' || (e.code.startsWith('F') && e.code.length <= 3 && e.code !== 'F11')) e.preventDefault();
       if ((e.ctrlKey || e.metaKey) && this.locked && e.code !== 'KeyW' && e.code !== 'KeyT' && e.code !== 'KeyN') e.preventDefault();
-      if (e.code === 'Space' && this.locked) e.preventDefault();
+      if ((e.code === 'Space' || e.code === 'Enter') && (this.locked || this.wantLock)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code); this.pressed.add(e.code);
     });
@@ -84,9 +84,10 @@ class InputClass {
   up(action) { const b = Bindings[action]; for (let i = 0; i < b.length; i++) if (this.released.has(b[i])) return true; return false; }
   fire() { return (this.mouse.buttons & 1) !== 0; }
   fireHit() { return (this.mouse.pressed & 1) !== 0; }
-  aim() { return (this.mouse.buttons & 2) !== 0; }
-  aimHit() { return (this.mouse.pressed & 2) !== 0; }
-  middleHit() { return (this.mouse.pressed & 4) !== 0; }
+  // e.button: 0 left, 1 middle, 2 right → bits 1 / 2 / 4
+  aim() { return (this.mouse.buttons & 4) !== 0; }
+  aimHit() { return (this.mouse.pressed & 4) !== 0; }
+  middleHit() { return (this.mouse.pressed & 2) !== 0; }
 
   // Call at the end of every frame.
   endFrame() {

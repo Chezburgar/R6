@@ -44,7 +44,7 @@ class AudioEngineClass {
   constructor() {
     this.ctx = null;
     this.ready = false;
-    this.volumes = { master: 0.8, sfx: 1, ui: 0.7, ambience: 0.6 };
+    this.volumes = { master: 0.8, sfx: 1, ui: 0.7, ambience: 0.6, music: 0.6 };
     this.listenerPos = new THREE.Vector3();
     this.listenerFwd = new THREE.Vector3(0, 0, -1);
     this.listenerUp = new THREE.Vector3(0, 1, 0);
@@ -67,6 +67,7 @@ class AudioEngineClass {
     this.sfx = ctx.createGain(); this.sfx.gain.value = this.volumes.sfx; this.sfx.connect(this.master);
     this.ui = ctx.createGain(); this.ui.gain.value = this.volumes.ui; this.ui.connect(this.master);
     this.amb = ctx.createGain(); this.amb.gain.value = this.volumes.ambience; this.amb.connect(this.master);
+    this.music = ctx.createGain(); this.music.gain.value = this.volumes.music; this.music.connect(this.master);
     // reverbs
     this.revRoom = ctx.createConvolver(); this.revRoom.buffer = makeImpulse(ctx, 0.9, 3.2, 0.25);
     this.revHall = ctx.createConvolver(); this.revHall.buffer = makeImpulse(ctx, 2.4, 2.2, 0.12);
@@ -78,7 +79,7 @@ class AudioEngineClass {
     this.ready = true;
   }
 
-  setVolume(k, v) { this.volumes[k] = v; if (!this.ctx) return; ({ master: this.master, sfx: this.sfx, ui: this.ui, ambience: this.amb })[k].gain.value = v; }
+  setVolume(k, v) { this.volumes[k] = v; if (!this.ctx) return; const n = ({ master: this.master, sfx: this.sfx, ui: this.ui, ambience: this.amb, music: this.music })[k]; if (n) n.gain.value = v; }
 
   updateListener(pos, fwd, up) {
     if (!this.ctx) return;
@@ -405,9 +406,22 @@ class AudioEngineClass {
   stopAmbience() { if (this._ambient && this.ctx) { const t = this.ctx.currentTime; this._ambient.windGain.gain.setTargetAtTime(0, t, 0.3); this._ambient.humGain.gain.setTargetAtTime(0, t, 0.3); this._ambient.roomGain.gain.setTargetAtTime(0, t, 0.3); } }
 
   // Menu theme: slow minor pad with a filtered pulse — evocative of the Siege front-end ambience.
+  // Menu theme: the bundled track (assets/audio/menu_theme.mp3) through the music bus; the procedural pad is the fallback.
   menuMusic(on) {
     if (!this.ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
+    if (this._track !== false) {
+      if (!this._track) {
+        const el = new Audio('assets/audio/menu_theme.mp3'); el.loop = true; el.preload = 'auto'; el.crossOrigin = 'anonymous';
+        const src = ctx.createMediaElementSource(el); const g = ctx.createGain(); g.gain.value = 0; src.connect(g); g.connect(this.music);
+        this._track = { el, gain: g, playing: false };
+        el.addEventListener('error', () => { this._track = false; if (on) this.menuMusic(true); });
+      }
+      const T = this._track; if (!T) { return this.menuMusic(on); }
+      if (on) { if (!T.playing) { T.playing = true; T.el.currentTime = 0; const p = T.el.play(); if (p && p.catch) p.catch(() => {}); } T.gain.gain.cancelScheduledValues(t); T.gain.gain.setTargetAtTime(1, t, 1.5); }
+      else if (T.playing) { T.playing = false; T.gain.gain.cancelScheduledValues(t); T.gain.gain.setTargetAtTime(0, t, 0.6); setTimeout(() => { if (!T.playing) T.el.pause(); }, 2500); }
+      return;
+    }
     if (!on) { if (this._music) { this._music.gain.gain.setTargetAtTime(0, t, 1.2); const m = this._music; this._music = null; setTimeout(() => { try { m.nodes.forEach(n => n.stop()); } catch (e) {} }, 4000); } return; }
     if (this._music) return;
     const gain = ctx.createGain(); gain.gain.value = 0; gain.connect(this.master);

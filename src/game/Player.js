@@ -193,7 +193,7 @@ export class Player {
     const wantSprint = Input.down('sprint') && C.stance === Stance.STAND && !Input.aim() && (Input.down('forward')) && !this.interaction && !C.trapped;
     C.sprinting = wantSprint;
     // lean
-    const lt = C.sprinting ? 0 : (Input.down('leanL') ? 1 : 0) - (Input.down('leanR') ? 1 : 0);
+    const lt = (C.sprinting || this.adsBlend < 0.35 || this.gadgetMode || this.gadget2Mode) ? 0 : (Input.down('leanL') ? 1 : 0) - (Input.down('leanR') ? 1 : 0);
     C.leanTarget = lt; C.lean = THREE.MathUtils.damp(C.lean, lt, 14, dt);
   }
   _tryStance(s) {
@@ -317,8 +317,8 @@ export class Player {
     if (Input.hit('slot1')) this._switchTo(0);
     if (Input.hit('slot2')) this._switchTo(1);
     if (Input.mouse.wheel) this._switchTo(C.weaponIndex === 0 ? 1 : 0);
-    if (Input.hit('slot3')) { this.gadgetMode = !this.gadgetMode; this.gadget2Mode = false; g.gadgets.onEquip(C, this.gadgetMode ? 'primary' : null); }
-    if (Input.hit('slot4') || Input.hit('gadget')) { this.gadget2Mode = !this.gadget2Mode; this.gadgetMode = false; g.gadgets.onEquip(C, this.gadget2Mode ? 'secondary' : null); }
+    if (Input.hit('slot3')) { this.gadgetMode = !this.gadgetMode; this.gadget2Mode = false; g.gadgets.onEquip(C, this.gadgetMode ? 'primary' : null); this.adsBlend = 0; this.game.audio.click('hover'); }
+    if (Input.hit('slot4') || Input.hit('gadget')) { this.gadget2Mode = !this.gadget2Mode; this.gadgetMode = false; g.gadgets.onEquip(C, this.gadget2Mode ? 'secondary' : null); this.adsBlend = 0; this.game.audio.click('hover'); }
     if (this.switchT > 0) { this.switchT -= dt; if (this.switchT <= 0 && this.pendingWeapon >= 0) { C.switchWeapon(this.pendingWeapon); this.pendingWeapon = -1; this._showWeapon(); } }
     if (!w) return;
     // ADS
@@ -344,8 +344,11 @@ export class Player {
     } else if (Input.fire() && C.sprinting) { C.sprinting = false; }
   }
   _switchTo(i) {
-    const C = this.char; if (i === C.weaponIndex || !C.weapons[i] || this.switchT > 0) return;
-    this.gadgetMode = this.gadget2Mode = false; this.game.gadgets.onEquip(C, null);
+    const C = this.char; if (!C.weapons[i]) return;
+    const gadgetOut = this.gadgetMode || this.gadget2Mode;
+    if (gadgetOut) { this.gadgetMode = this.gadget2Mode = false; this.game.gadgets.onEquip(C, null); }
+    if (this.switchT > 0) { this.pendingWeapon = i === C.weaponIndex ? -1 : i; return; }   // re-target or cancel a swap in progress
+    if (i === C.weaponIndex) { if (gadgetOut) { this.switchT = 0.25; this.pendingWeapon = -1; this.game.audio.click('hover'); } return; }
     this.pendingWeapon = i; this.switchT = 0.42; this.adsBlend = 0; this.game.audio.click('hover');
     if (C.weapon) C.weapon.interruptReload();
   }
@@ -510,13 +513,15 @@ export class Player {
       if (this.scopeActive) {
         // lens centre in screen pixels
         const lp = lens.getWorldPosition(_v3).clone(); const ndc = lp.project(this._vmCamera || this.camera);
-        const size = this.game.renderer.getSize(new THREE.Vector2()); const dpr = this.game.renderer.getPixelRatio();
+        // gl_FragCoord is in the composer's buffer pixels, which may differ from renderer size × DPR
+        const rt = this.game.composer && this.game.composer.renderTarget1; const size = this.game.renderer.getSize(new THREE.Vector2()); const dpr = this.game.renderer.getPixelRatio();
+        const W = rt ? rt.width : size.x * dpr, H = rt ? rt.height : size.y * dpr;
         const u = this.scopeMat.uniforms;
-        u.uRes.value.set(size.x * dpr, size.y * dpr);
-        u.uCenter.value.set((ndc.x * 0.5 + 0.5) * size.x * dpr, (ndc.y * 0.5 + 0.5) * size.y * dpr);
+        u.uRes.value.set(W, H);
+        u.uCenter.value.set((ndc.x * 0.5 + 0.5) * W, (ndc.y * 0.5 + 0.5) * H);
         // projected lens radius: use a point offset by radius along camera up
         const edge = lens.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, M.scope.radius * s, 0).applyQuaternion(this.camera.quaternion)); const e = edge.project(this._vmCamera || this.camera);
-        u.uLensPx.value = Math.abs(e.y - ndc.y) * 0.5 * size.y * dpr * 2;
+        u.uLensPx.value = Math.abs(e.y - ndc.y) * 0.5 * H * 2;
         u.uAlign.value = Math.min(1, Math.hypot(ndc.x, ndc.y) * 3);
         u.uReticle.value = 1;
       }

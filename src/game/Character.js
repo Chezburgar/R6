@@ -57,7 +57,8 @@ export class Character {
     this.model.traverse(o => {
       if (o.isSkinnedMesh) {
         this.skinned = o; o.frustumCulled = false; o.castShadow = true; o.receiveShadow = true;
-        if (this.op.tint) { o.material = o.material.clone(); o.material.color.setHex(this.op.tint); }
+        o.material = o.material.clone();   // per-character material: tint, and the fade-out after death
+        if (this.op.tint) o.material.color.setHex(this.op.tint);
       }
       if (o.isBone) this[`b_${o.name}`] = o;
     });
@@ -124,6 +125,7 @@ export class Character {
     const A = this.actions;
     if (this.dead || this.dbno) {
       this._mixerUpdate(dt);
+      if (this.dead) this._fadeBody(dt);
       if (this.dbno) { this._applyDBNO(dt); if (!this.reviver) { this.bleedT = (this.bleedT || 0) + dt; this.dbnoHealth -= dt * (20 / 45); if (this.dbnoHealth <= 0) this.die(this.lastDamager, null, false); } }
       this._placeWeapon(); this._armIK();
       this._hbStale = true;
@@ -208,6 +210,16 @@ export class Character {
     this.model.updateMatrixWorld(true);
   }
 
+  // bodies stay for a few seconds, then fade out and disappear
+  _fadeBody(dt) {
+    this.deadT = (this.deadT || 0) + dt; const m = this.skinned && this.skinned.material; if (!m) return;
+    const t0 = 8, dur = 2.5;
+    if (this.deadT < t0) return;
+    const k = Math.min(1, (this.deadT - t0) / dur);
+    if (!m.transparent) { m.transparent = true; m.depthWrite = true; m.needsUpdate = true; }
+    m.opacity = 1 - k;
+    if (k >= 1 && this.model.visible) { this.model.visible = false; if (this.tpWeapon) this.tpWeapon.visible = false; }
+  }
   _applyDBNO(dt) {
     // crawl pose: model lies on its side (end frame of Side_Shot), lowered
     this.model.rotation.x = 0; this.model.position.set(0, 0, 0);
@@ -392,6 +404,7 @@ export class Character {
     this.stunned = 0; this.empd = 0; this.trapped = false; this.wire = 0; this.hasDefuser = false; this.planting = 0; this.interacting = null; this.scanned = 0; this.pingedUntil = 0; this.vaulting = false;
     this.gadgetUses = 0; this.gadget2Uses = 0; this.reviveProgress = 0; this.tags.clear();
     if (this.actions) { for (const k in this.actions) { const a = this.actions[k]; if (!a) continue; a.stop(); a.reset(); a.setEffectiveWeight(k === 'idle' ? 1 : 0); a.play(); } if (this.actions.idle) { this.actions.idle.timeScale = 0; this.actions.idle.time = 0.03; } }
+    this.deadT = 0; if (this.skinned) { const m = this.skinned.material; if (m.transparent) { m.transparent = false; m.opacity = 1; m.needsUpdate = true; } } if (this.model) this.model.visible = this.visibleTP;
     for (const w of this.weapons) w.reset();
     this.weaponIndex = 0; this._refreshTPWeapon();
   }

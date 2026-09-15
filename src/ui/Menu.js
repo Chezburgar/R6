@@ -267,7 +267,7 @@ export class MenuScene {
 export class OperatorSelect {
   constructor(app, root, menu) { this.app = app; this.root = root; this.menu = menu; this.el = el('div', 'screen hidden'); root.appendChild(this.el); this.timer = 0; this.onDone = null; }
   open(side, takenIds, current, onDone, seconds = 25) {
-    this.side = side; this.taken = new Set(takenIds); this.sel = current || Operators.find(o => o.side === side && !this.taken.has(o.id)).id; this.onDone = onDone; this.timer = seconds; this.el.classList.remove('hidden'); this.render();
+    this.side = side; this.taken = new Set(takenIds); this.sel = current || Operators.find(o => o.side === side && !this.taken.has(o.id)).id; this.onDone = onDone; this.timer = seconds; this.takeDefuser = false; this.el.classList.remove('hidden'); this.render();
     this.app.menuScene.setMode('operator', this.sel);
   }
   close() { this.el.classList.add('hidden'); }
@@ -281,10 +281,11 @@ export class OperatorSelect {
         <div class="ops-cols"><div class="ops-col"><h4>${icon('atk')} ATTACKERS</h4>${grid('atk')}</div><div class="ops-col"><h4>${icon('def')} DEFENDERS</h4>${grid('def')}</div></div></div>
       ${this.menu.opPanelHTML(op)}
       <div class="ops-ai"><div class="team">YOUR TEAM &nbsp;${bots.map(b => `<div class="mini ${b.you ? 'you' : ''}" title="${b.name}">${icon(b.icon)}</div>`).join('')}</div></div>
-      <div class="ops-actions"><button class="btn primary" data-action="ready">READY</button></div>`;
+      <div class="ops-actions">${this.side === 'atk' ? `<button class="btn defuser-btn ${this.takeDefuser ? 'on' : ''}" data-action="defuser" title="Carry the defuser this round">${icon('defuser')}<span>${this.takeDefuser ? 'CARRYING THE DEFUSER' : 'PICK UP DEFUSER'}</span></button>` : ''}<button class="btn primary" data-action="ready">READY</button></div>`;
     this.el.querySelectorAll('[data-op]').forEach(b => b.addEventListener('click', () => { const o = OperatorById[b.dataset.op]; if (o.side !== this.side || this.taken.has(o.id)) return; AudioEngine.click('ui'); this.sel = o.id; this.render(); this.app.menuScene.setMode('operator', this.sel); }));
     this.el.querySelectorAll('[data-lo]').forEach(seg => seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { AudioEngine.click('ui'); this.menu.loadoutFor(this.sel)[seg.dataset.lo] = b.dataset.v; this.app.settings.loadouts = this.menu.loadouts; this.app.saveSettings(); this.render(); })));
     this.el.querySelector('[data-action=ready]').addEventListener('click', () => { AudioEngine.click('ui'); this.finish(); });
+    const db = this.el.querySelector('[data-action=defuser]'); if (db) db.addEventListener('click', () => { AudioEngine.click('ui'); this.takeDefuser = !this.takeDefuser; this.render(); });
     this.el.querySelectorAll('button').forEach(b => b.addEventListener('mouseenter', () => AudioEngine.click('hover')));
   }
   update(dt) {
@@ -293,5 +294,5 @@ export class OperatorSelect {
     if (Math.ceil(this.timer) !== prev) { const t = this.el.querySelector('.timerbar'); if (t) t.firstChild.textContent = Math.max(0, Math.ceil(this.timer)); }
     if (this.timer <= 0) this.finish();
   }
-  finish() { if (this.el.classList.contains('hidden')) return; this.close(); const cb = this.onDone; this.onDone = null; cb && cb(this.sel, this.menu.loadoutFor(this.sel)); }
+  finish() { if (this.el.classList.contains('hidden')) return; this.close(); const cb = this.onDone; this.onDone = null; cb && cb(this.sel, this.menu.loadoutFor(this.sel), { defuser: !!this.takeDefuser }); }
 }
