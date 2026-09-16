@@ -65,6 +65,17 @@ const recipes = {
     const base = 128 + (n - 0.5) * 40 + (g - 0.5) * 22 - Math.max(0, stain - 0.6) * 90;
     o.r = base * 1.02; o.g = base; o.b = base * 0.96; o.h = n * 0.6 + g * 0.4;
   } },
+  // sandy exterior render with faint trowel streaks, dust and hairline cracks (Border's outside walls)
+  stucco: { size: 512, repeat: 0.5, roughness: 0.92, metalness: 0, normalStrength: 1.8, fn: (u, v, o) => {
+    const n = fbm(u * 7, v * 7, 4), g = fbm(u * 55 + 3, v * 55 + 8, 2), streak = fbm(u * 2 + 9, v * 30, 3);
+    const dust = Math.max(0, fbm(u * 3 + 17, v * 3 + 4, 3) - 0.52) * 1.5; const crack = Math.pow(Math.max(0, 1 - Math.abs(fbm(u * 9 + 4, v * 9 + 6, 3) - 0.5) * 40), 3) * 0.5;
+    const base = 196 + (n - 0.5) * 22 + (g - 0.5) * 10 + (streak - 0.5) * 8;
+    o.r = (base + 8) * (1 - dust * 0.35) * (1 - crack); o.g = (base - 4) * (1 - dust * 0.35) * (1 - crack); o.b = (base - 30) * (1 - dust * 0.3) * (1 - crack); o.h = n * 0.5 + g * 0.4 - crack * 0.6;
+  } },
+  grass: { size: 512, repeat: 0.4, roughness: 1, metalness: 0, normalStrength: 1.6, fn: (u, v, o) => {
+    const n = fbm(u * 60, v * 60, 3), m = fbm(u * 5, v * 5, 3), dry = Math.max(0, fbm(u * 4 + 8, v * 4 + 2, 3) - 0.5) * 2;
+    o.r = 70 + n * 40 + dry * 60 + (m - 0.5) * 20; o.g = 96 + n * 50 + dry * 30 + (m - 0.5) * 30; o.b = 36 + n * 22 + dry * 10; o.h = n;
+  } },
   plaster: { size: 512, repeat: 0.5, roughness: 0.85, metalness: 0, normalStrength: 1.2, fn: (u, v, o) => {
     const n = fbm(u * 6, v * 6, 4), g = fbm(u * 60 + 5, v * 60 + 9, 2);
     const grime = Math.pow(v, 3) * 0.5 + Math.max(0, fbm(u * 4 + 20, v * 4 + 3, 3) - 0.55) * 1.4;
@@ -110,6 +121,7 @@ const recipes = {
     const shade = (0.72 + edge * 0.28) * (1 - knot * 0.45) * (1 - dirt * 0.45);
     o.r = (188 + grain * 44) * shade; o.g = (156 + grain * 40) * shade; o.b = (114 + grain * 30) * shade; o.h = grain * 0.5 + edge * 0.4 - knot * 0.3;
   } },
+  trim: { size: 128, repeat: 1, roughness: 0.6, metalness: 0.05, normalStrength: 0.6, fn: (u, v, o) => { const g = fbm(u * 20, v * 3, 2); const base = 58 + g * 14; o.r = base + 6; o.g = base; o.b = base - 6; o.h = g * 0.3; } },
   plank: { size: 256, repeat: 1, roughness: 0.8, metalness: 0, normalStrength: 1.6, fn: (u, v, o) => {
     const grain = fbm(u * 2, v * 60, 4) * 0.6 + fbm(u * 20, v * 4, 2) * 0.4;
     o.r = 150 + grain * 50; o.g = 112 + grain * 40; o.b = 72 + grain * 25; o.h = grain;

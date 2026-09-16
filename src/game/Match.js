@@ -276,7 +276,7 @@ export class AttackPlan {
     const s = this.entries[this.idx++ % this.entries.length];
     // point outside the opening
     const out = new THREE.Vector3(s.x, s.y, s.z);
-    const inward = new THREE.Vector3(16 - s.x, 0, 11 - s.z); inward.y = 0; inward.normalize();
+    const inward = new THREE.Vector3(L.center.x - s.x, 0, L.center.z - s.z); inward.y = 0; inward.normalize();
     // stage beside the opening, against the wall, out of the line of fire through it
     const along = s.horizontal ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1); const sideSign = Math.random() < 0.5 ? -1 : 1;
     const outside = out.clone().addScaledVector(inward, -1.3).addScaledVector(along, sideSign * (s.w / 2 + 1.6)); const insidePt = out.clone().addScaledVector(inward, 1.5);

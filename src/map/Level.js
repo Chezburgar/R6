@@ -370,7 +370,7 @@ export class Level {
     this.group = new THREE.Group(); this.dynamicGroup = new THREE.Group();
     scene.add(this.group); scene.add(this.dynamicGroup);
     this._static = new Map();      // materialKey -> geometries[]
-    this.softWalls = []; this.barricadeSlots = []; this.hatches = []; this.glass = []; this.droneHoles = [];
+    this.softWalls = []; this.barricadeSlots = []; this.hatches = []; this.glass = []; this.droneHoles = []; this.openings = [];
     this.rooms = []; this.sites = []; this.spawns = { atk: [], def: [] };
     this.lights = []; this.rappelWalls = []; this.cameras = [];
     this.floorYs = [0, FLOOR_H];
@@ -444,6 +444,7 @@ export class Level {
 
   _registerOpening(o, cx, y, cz, horizontal, floor, t, exterior) {
     const slot = { x: cx, y, z: cz, w: o.w, h: o.h, horizontal, floor, kind: o.kind || 'door', exterior: !!exterior };
+    this.openings.push(slot);
     if (o.kind === 'window') {
       // glass pane
       const gw = horizontal ? o.w : 0.02, gd = horizontal ? 0.02 : o.w;
@@ -583,6 +584,53 @@ export class Level {
     cam.col = this.world.add(new Collider(new THREE.Vector3(x - 0.12, y - 0.1, z - 0.15), new THREE.Vector3(x + 0.12, y + 0.1, z + 0.22), { material: 'metal', tag: 'camera', owner: cam, floor: cam.floor, blocksNav: false, blocksVision: false }));
     cam.onBullet = (dmg, shooter) => { if (!cam.alive) return; cam.alive = false; led.material = flat(0x111111, 0.5, 0.2); body.rotation.x = 0.6; hood.rotation.x = 0.6; this.onCameraDestroyed && this.onCameraDestroyed(cam, shooter); };
     this.cameras.push(cam); return cam;
+  }
+  // A text plaque (room names, exit signs, shop sign). facing: 'x+','x-','z+','z-' = the normal of the sign face.
+  textSign(text, x, y, z, facing, opts = {}) {
+    const w = opts.w || 1.0, h = opts.h || 0.28; const c = document.createElement('canvas'); const pw = 512, ph = Math.max(64, Math.round(512 * h / w)); c.width = pw; c.height = ph;
+    const ctx = c.getContext('2d'); ctx.fillStyle = opts.bg || '#1b1f26'; ctx.fillRect(0, 0, pw, ph);
+    if (opts.border !== false) { ctx.strokeStyle = opts.fg || '#f2f2f2'; ctx.lineWidth = 6; ctx.strokeRect(8, 8, pw - 16, ph - 16); }
+    ctx.fillStyle = opts.fg || '#f2f2f2'; ctx.font = `${opts.weight || 700} ${Math.round(ph * (opts.size || 0.55))}px "Barlow Condensed", "Arial Narrow", Arial, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, pw / 2, ph / 2 + ph * 0.03);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, metalness: 0.1, emissive: new THREE.Color(opts.emissiveColor || 0xffffff), emissiveMap: tex, emissiveIntensity: opts.emissive !== undefined ? opts.emissive : 0.25 });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); m.position.set(x, y, z);
+    const rot = { 'z+': 0, 'x+': Math.PI / 2, 'z-': Math.PI, 'x-': -Math.PI / 2 }[facing] || 0; m.rotation.y = rot;
+    m.castShadow = false; m.receiveShadow = false; this.group.add(m); this.emissives.push(m); return m;
+  }
+  // Simple tree: tapered trunk + three leaf blobs. Blocks movement at the trunk only.
+  tree(x, z, h = 6, r = 2.2, seed = 0) {
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.24, h * 0.55, 8), flat(0x4a3a2a, 0.9, 0)); trunk.position.set(x, h * 0.275, z); trunk.castShadow = true; this.group.add(trunk);
+    const leaf = flat(0x2f5a2a, 0.95, 0); const leaf2 = flat(0x3b6d33, 0.95, 0);
+    const blobs = [[0, h * 0.62, 0, r], [r * 0.45, h * 0.5, r * 0.3, r * 0.75], [-r * 0.4, h * 0.55, -r * 0.35, r * 0.7], [0.1, h * 0.8, 0.1, r * 0.6]];
+    blobs.forEach(([ox, oy, oz, rr], i) => { const m = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 1), i % 2 ? leaf2 : leaf); m.position.set(x + ox, oy, z + oz); m.rotation.set(seed + i, seed * 0.7 + i * 0.9, 0); m.castShadow = true; m.receiveShadow = true; this.group.add(m); });
+    this.world.add(new Collider(new THREE.Vector3(x - 0.25, 0, z - 0.25), new THREE.Vector3(x + 0.25, h * 0.55, z + 0.25), { material: 'wood', tag: 'prop', blocksVision: false }));
+  }
+  // Baseboards and cornices around a room, skipping doorways. Cheap, non-colliding, hides the floor/wall seam.
+  trimRoom(r, opts = {}) {
+    const y0 = r.min.y, top = r.min.y + (opts.wallH || 3.2); const mat = opts.material || 'trim';
+    const ext = this.interiorBounds; const isExt = (v, e) => Math.abs(v - e) < 0.01;
+    const edges = [
+      { axis: 'x', at: r.min.x, off: isExt(r.min.x, ext.min.x) ? 0.18 : 0.085, a0: r.min.z, a1: r.max.z, sign: 1 },
+      { axis: 'x', at: r.max.x, off: isExt(r.max.x, ext.max.x) ? 0.18 : 0.085, a0: r.min.z, a1: r.max.z, sign: -1 },
+      { axis: 'z', at: r.min.z, off: isExt(r.min.z, ext.min.z) ? 0.18 : 0.085, a0: r.min.x, a1: r.max.x, sign: 1 },
+      { axis: 'z', at: r.max.z, off: isExt(r.max.z, ext.max.z) ? 0.18 : 0.085, a0: r.min.x, a1: r.max.x, sign: -1 },
+    ];
+    for (const e of edges) {
+      // openings on this edge (any kind) split the strip
+      const cuts = this.openings.filter(o => Math.abs(o.y - y0) < 0.5 && (e.axis === 'x' ? (!o.horizontal && Math.abs(o.x - e.at) < 0.2) : (o.horizontal && Math.abs(o.z - e.at) < 0.2))).map(o => [(e.axis === 'x' ? o.z : o.x) - o.w / 2 - 0.06, (e.axis === 'x' ? o.z : o.x) + o.w / 2 + 0.06]).sort((p, q) => p[0] - q[0]);
+      let cur = e.a0 + e.off; const spans = [];
+      for (const [c0, c1] of cuts) { if (c0 > cur) spans.push([cur, Math.min(c0, e.a1 - e.off)]); cur = Math.max(cur, c1); }
+      if (cur < e.a1 - e.off) spans.push([cur, e.a1 - e.off]);
+      const face = e.at + e.sign * e.off; const t = 0.018, bh = 0.09, ch = 0.06;
+      for (const [s0, s1] of spans) {
+        if (s1 - s0 < 0.05) continue;
+        const min = e.axis === 'x' ? [Math.min(face, face + e.sign * t), y0, s0] : [s0, y0, Math.min(face, face + e.sign * t)];
+        const max = e.axis === 'x' ? [Math.max(face, face + e.sign * t), y0 + bh, s1] : [s1, y0 + bh, Math.max(face, face + e.sign * t)];
+        this.box(min, max, mat, { collide: false, uvScale: 1 });
+        if (opts.cornice !== false) { const mn = min.slice(), mx = max.slice(); mn[1] = top - ch; mx[1] = top; this.box(mn, mx, mat, { collide: false, uvScale: 1 }); }
+      }
+    }
   }
   light(x, y, z, color, intensity, distance, opts = {}) {
     const l = new THREE.PointLight(color, intensity * 0.8, distance, 2);

@@ -149,7 +149,7 @@ export class Game {
     this.level.onBarricadeKnock = (b, pos, fp) => { this.audio.knock(pos, !!fp); };
     this.level.onCameraDestroyed = (cam, shooter) => { this.effects.shockSparks && this.effects.shockSparks(cam.pos); this.audio.impact(cam.pos, 'metal'); this.audio.glass && this.audio.glass(cam.pos); if (this.player && this.player.side === 'def') this.hud.toast('CAMERA LOST — ' + cam.name, 2); if (shooter && shooter.isPlayer) this.hud.hitmarker(false, false); };
     this.level.onBarricadeChunk = (pos, normal) => { this.effects.wallDebris(pos, normal || new THREE.Vector3(0, 0, 1), 'wood'); };
-    this.nav = new NavGrid(this.world, new THREE.Box3(new THREE.Vector3(-16, 0, -14), new THREE.Vector3(48, 8, 42)), this.level.floorYs);
+    this.nav = new NavGrid(this.world, new THREE.Box3(new THREE.Vector3(-20, 0, -20), new THREE.Vector3(62, 8, 52)), this.level.floorYs);
     if (this.effects) this.effects.level = this.level;
     if (this.gadgets) this.gadgets.reset();
   }
@@ -194,7 +194,7 @@ export class Game {
     let ai = 0, di = 0;
     for (const c of this.characters) {
       c.side = c.op.side; // fixed by operator
-      if (c.side === 'atk') { const p = atkSpawn.points[ai++ % atkSpawn.points.length]; const yaw = Math.atan2(-(16 - p.x), -(11 - p.z)); if (c.isPlayer) this.player.spawn(p, yaw); else c.bot.spawn(p, yaw); }
+      if (c.side === 'atk') { const p = atkSpawn.points[ai++ % atkSpawn.points.length]; const yaw = Math.atan2(-(L.center.x - p.x), -(L.center.z - p.z)); if (c.isPlayer) this.player.spawn(p, yaw); else c.bot.spawn(p, yaw); }
       else { const p = this.findClearSpot(site.defSpawns[di++ % site.defSpawns.length]); const yaw = Math.random() * Math.PI * 2; if (c.isPlayer) this.player.spawn(p, yaw); else c.bot.spawn(p, yaw); }
       c.gadgetUses = 0; c.gadget2Uses = 0; c.hasDefuser = false; c.planting = 0; c.defusing = 0;
       if (c.bot) { c.bot.planBuilt = false; c.bot.plan = []; c.bot.atkPlan = null; c.bot.holdSpot = null; c.bot.coverSpot = null; c.bot.guardSpot = null; }
@@ -221,7 +221,7 @@ export class Game {
   }
   enterDrone(pos) {
     const P = this.player; if (P.drone) P.drone.dispose();
-    const p = pos.clone(); p.y = 0.1; P.drone = new Drone(this, p, Math.atan2(-(16 - p.x), -(11 - p.z))); P.usingDrone = true; P.dronesLeft = Math.max(0, P.dronesLeft - 1); this.hud.drone(true);
+    const p = pos.clone(); p.y = 0.1; P.drone = new Drone(this, p, Math.atan2(-(this.level.center.x - p.x), -(this.level.center.z - p.z))); P.usingDrone = true; P.dronesLeft = Math.max(0, P.dronesLeft - 1); this.hud.drone(true);
     this.hud.toast('DRONE DEPLOYED — HOLD X TO IDENTIFY · Z TO PING', 3.5);
   }
   // throw out a fresh drone from the operator's hands (action phase)

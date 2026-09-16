@@ -146,12 +146,12 @@ export class Menu {
   drawMapPreview(c) {
     c.width = 400; c.height = 200; const x = c.getContext('2d');
     x.fillStyle = '#0e1116'; x.fillRect(0, 0, 400, 200);
-    const sx = 400 / 40, sz = 200 / 30, ox = 4, oz = 4;
+    const K = 1.25; const sx = 400 / 50, sz = 200 / 37, ox = 4, oz = 4;
     x.strokeStyle = 'rgba(255,255,255,.25)'; x.lineWidth = 1;
     const rooms = [[0, 0, 10, 8], [0, 8, 4, 14], [4, 8, 10, 14], [0, 14, 10, 22], [10, 0, 20, 8], [10, 8, 20, 14], [10, 14, 18, 22], [18, 14, 24, 22], [24, 14, 32, 22], [20, 0, 32, 8], [20, 8, 26, 14], [26, 8, 32, 14]];
-    for (const [a, b, cc, d] of rooms) { x.fillStyle = 'rgba(255,255,255,.06)'; x.fillRect((a + ox) * sx, (b + oz) * sz, (cc - a) * sx, (d - b) * sz); x.strokeRect((a + ox) * sx, (b + oz) * sz, (cc - a) * sx, (d - b) * sz); }
-    x.fillStyle = 'rgba(233,131,43,.8)'; x.fillRect((5 + ox) * sx - 4, (4 + oz) * sz - 4, 8, 8); x.fillRect((2 + ox) * sx - 4, (11 + oz) * sz - 4, 8, 8);
-    x.fillStyle = '#fff'; x.font = 'bold 10px Barlow Condensed, sans-serif'; x.fillText('TELLERS', (1 + ox) * sx, (2 + oz) * sz); x.fillText('CUSTOMS', (22 + ox) * sx, (2 + oz) * sz); x.fillText('LOBBY', (12 + ox) * sx, (2 + oz) * sz);
+    for (const [a0, b0, c0, d0] of rooms) { const a = a0 * K, b = b0 * K, cc = c0 * K, d = d0 * K; x.fillStyle = 'rgba(255,255,255,.06)'; x.fillRect((a + ox) * sx, (b + oz) * sz, (cc - a) * sx, (d - b) * sz); x.strokeRect((a + ox) * sx, (b + oz) * sz, (cc - a) * sx, (d - b) * sz); }
+    x.fillStyle = 'rgba(233,131,43,.8)'; x.fillRect((5 * K + ox) * sx - 4, (4 * K + oz) * sz - 4, 8, 8); x.fillRect((2 * K + ox) * sx - 4, (11 * K + oz) * sz - 4, 8, 8);
+    x.fillStyle = '#fff'; x.font = 'bold 10px Barlow Condensed, sans-serif'; x.fillText('TELLERS', (1 * K + ox) * sx, (2 * K + oz) * sz); x.fillText('CUSTOMS', (22 * K + ox) * sx, (2 * K + oz) * sz); x.fillText('LOBBY', (12 * K + ox) * sx, (2 * K + oz) * sz);
   }
 }
 

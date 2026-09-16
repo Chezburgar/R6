@@ -112,7 +112,13 @@ class App {
     Input.unlock(); Input.wantLock = false;
     this.overlay(playerWon ? 'VICTORY' : 'DEFEAT', `<div class="grid"><div><div class="label">FINAL SCORE</div><div class="value">${M.score.A} — ${M.score.B}</div></div><div><div class="label">KILLS / DEATHS</div><div class="value">${stats.kills} / ${stats.deaths}</div></div><div><div class="label">HEADSHOTS</div><div class="value">${stats.headshots}</div></div><div><div class="label">RENOWN EARNED</div><div class="value">+${250 + stats.kills * 40 + (playerWon ? 300 : 0)}</div></div></div>`, [{ label: 'RETURN TO MENU', primary: true, fn: () => this.leaveMatch() }]);
   }
-  leaveMatch() { if (this.game) { this.game.dispose(); this.game = null; } Input.unlock(); Input.wantLock = false; this.mode = 'menu'; this.menu.showPage('home'); AudioEngine.menuMusic(true); }
+  leaveMatch() {
+    if (this.game) { this.game.dispose(); this.game = null; }
+    // every match-time popup goes: pause/settings/result overlays, round banners, click-to-play, toasts
+    this.closeOverlay(); this.paused = false; this.opSelect && this.opSelect.close();
+    for (const e of this.uiRoot.querySelectorAll('.overlay, .roundend, .toast')) e.remove();
+    Input.unlock(); Input.wantLock = false; this.mode = 'menu'; this.menu.showPage('home'); AudioEngine.menuMusic(true);
+  }
 
   // ---------- pause / overlays ----------
   onEscape() {
