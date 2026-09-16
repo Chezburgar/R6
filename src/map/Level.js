@@ -102,7 +102,7 @@ export class SoftWall {
     cell.dead = true; this.alive--;
     this.level.world.remove(cell.collider);
     this.level._hideInstance(cell);
-    if (!silent) this.level.onCellDestroyed && this.level.onCellDestroyed(this, cell);
+    if (!silent) { this.level.onCellDestroyed && this.level.onCellDestroyed(this, cell); this.level.onCellGone && this.level.onCellGone(this, cell); }
     return true;
   }
   // Destroy every cell whose center lies within radius of p (sphere), optionally in a box region.
@@ -110,7 +110,7 @@ export class SoftWall {
     let n = 0; const c = new THREE.Vector3();
     for (let j = 0; j < this.ny; j++) for (let i = 0; i < this.nx; i++) {
       const cell = this.cells[this.cellIndex(i, j)]; if (!cell || cell.dead) continue;
-      this.cellCenter(i, j, c); if (c.distanceTo(p) <= r) { if (this.destroyCell(cell, true)) n++; }
+      this.cellCenter(i, j, c); if (c.distanceTo(p) <= r) { if (this.destroyCell(cell, true)) { n++; this.level.onCellGone && this.level.onCellGone(this, cell); } }
     }
     if (n) this.level.onWallChanged && this.level.onWallChanged(this);
     return n;
@@ -121,14 +121,14 @@ export class SoftWall {
       const cell = this.cells[this.cellIndex(i, j)]; if (!cell || cell.dead) continue;
       this.cellCenter(i, j, c);
       const da = this.horizontal ? Math.abs(c.x - p.x) : Math.abs(c.z - p.z);
-      if (da <= halfW + 1e-3 && Math.abs(c.y - p.y) <= halfH + 1e-3) { if (this.destroyCell(cell, true)) n++; }
+      if (da <= halfW + 1e-3 && Math.abs(c.y - p.y) <= halfH + 1e-3) { if (this.destroyCell(cell, true)) { n++; this.level.onCellGone && this.level.onCellGone(this, cell); } }
     }
     if (n) this.level.onWallChanged && this.level.onWallChanged(this);
     return n;
   }
   reinforce() {
     if (this.reinforced || !this.reinforceable) return false;
-    this.reinforced = true;
+    this.reinforced = true; this.level.onReinforced && this.level.onReinforced(this);
     for (const cell of this.cells) if (cell && !cell.dead) { cell.collider.material = 'reinforced'; cell.collider.penetrable = false; }
     // metal panels + colliders per span between openings (doorways/windows stay open)
     const h = this.h; const spans = []; let cursor = 0;
@@ -199,6 +199,7 @@ export class Barricade {
   }
   beginBuild(builderPos, builderIsPlayer = false) {
     if (this.building) return; this._clear(); this.building = true; this.builderIsPlayer = builderIsPlayer; this.progress = 0; this._placed = 0; this.opened = false; this.hp = 3;
+    this.level.onBarricadeOp && this.level.onBarricadeOp(this, 'begin', { pos: builderPos || this.slot });
     const s = this.slot; const { n, pw, gap, W } = this._layout();
     // side the builder stands on: braces go there, boards are placed from the builder's right to left
     const axis = s.horizontal ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
@@ -293,14 +294,14 @@ export class Barricade {
     if (!this.building) return;
     this.setProgress(1, 1); for (const a of this._anim) a.mesh.position.copy(a.base); this._anim.length = 0;
     this.building = false; this.built = true; this.opened = false; this.hp = 3;
-    this.level.onBarricadeChanged && this.level.onBarricadeChanged(this);
+    this.level.onBarricadeChanged && this.level.onBarricadeChanged(this); this.level.onBarricadeOp && this.level.onBarricadeOp(this, 'finish', { pos: this.inward ? { x: this.slot.x + this.inward.x, y: this.slot.y, z: this.slot.z + this.inward.z } : this.slot });
   }
-  cancelBuild() { if (!this.building) return; this._clear(); this.building = false; }
+  cancelBuild() { if (!this.building) return; this._clear(); this.building = false; this.level.onBarricadeOp && this.level.onBarricadeOp(this, 'cancel'); }
   // instant build (AI shortcut / legacy)
   build(builderPos) { this.beginBuild(builderPos); this.finish(); }
 
   // ---- damage --------------------------------------------------------------------------
-  _killPart(p) { if (p.dead) return; p.dead = true; if (p.col) { this.level.world.remove(p.col); p.col = null; } p.mesh.visible = false; }
+  _killPart(p) { if (p.dead) return; p.dead = true; if (p.col) { this.level.world.remove(p.col); p.col = null; } p.mesh.visible = false; this.level.onBarricadeOp && this.level.onBarricadeOp(this, 'part', { i: this.parts.indexOf(p) }); }
   _afterDamage() {
     const midAlive = this.parts.some(p => p.mid && !p.dead);
     for (const b of this.braces) { const band = this.parts.filter(p => p.mid && Math.abs(p.cy - b.y) < this.slot.h * 0.3); const dead = band.filter(p => p.dead).length; if (dead > band.length * 0.5) b.mesh.visible = false; }
@@ -331,7 +332,8 @@ export class Barricade {
   }
   destroy() {
     if (!this.built && !this.building) return;
-    for (const p of this.parts) if (!p.dead) this._killPart(p);
+    this.level.onBarricadeOp && this.level.onBarricadeOp(this, 'destroy');
+    const hook = this.level.onBarricadeOp; this.level.onBarricadeOp = null; for (const p of this.parts) if (!p.dead) this._killPart(p); this.level.onBarricadeOp = hook;
     this._clear(); this.built = false; this.building = false; this.opened = false; this.hp = 3;
     this.level.onBarricadeChanged && this.level.onBarricadeChanged(this);
   }
@@ -353,7 +355,7 @@ export class Hatch {
     this.col = level.world.add(new Collider(new THREE.Vector3(x - size / 2, y - 0.1, z - size / 2), new THREE.Vector3(x + size / 2, y, z + size / 2), { material: 'wood', penetrable: true, penMult: 0.6, owner: this, tag: 'hatch', floor }));
     this.center = new THREE.Vector3(x, y, z);
   }
-  reinforce() { if (this.open || this.reinforced) return false; this.reinforced = true; this.mesh.material = getMaterial('metal'); this.col.material = 'reinforced'; this.col.penetrable = false; return true; }
+  reinforce() { if (this.open || this.reinforced) return false; this.reinforced = true; this.mesh.material = getMaterial('metal'); this.col.material = 'reinforced'; this.col.penetrable = false; this.level.onHatchChanged && this.level.onHatchChanged(this); return true; }
   destroy() {
     if (this.open) return false; if (this.reinforced) return false;
     this.open = true; this.level.world.remove(this.col); this.level.dynamicGroup.remove(this.mesh); this.level.onHatchChanged && this.level.onHatchChanged(this); return true;
@@ -722,6 +724,7 @@ export class Level {
     if (this._studs) for (const s of this._studs) { if (s.wall === cell.wall && !s.dead && Math.abs(s.c.x - cell.center.x) < 0.3 && Math.abs(s.c.z - cell.center.z) < 0.3) { /* keep studs for realism unless explosion */ } }
   }
   removeStudsNear(p, r) {
+    this.onStudsRemoved && this.onStudsRemoved(p, r);
     if (!this._studs) return;
     for (const s of this._studs) { if (s.dead) continue; const dx = s.c.x - p.x, dz = s.c.z - p.z; if (Math.hypot(dx, dz) < r) { s.dead = true; this._studInst.setMatrixAt(s.inst, this._zero); this._studInst.instanceMatrix.needsUpdate = true; } }
   }
@@ -785,7 +788,7 @@ export class Level {
   }
   breakGlass(pane, effects) {
     if (pane.broken) return; pane.broken = true;
-    this.world.remove(pane.col); this.dynamicGroup.remove(pane.mesh);
+    this.world.remove(pane.col); this.dynamicGroup.remove(pane.mesh); this.onGlassBroken && this.onGlassBroken(pane);
     effects && effects.glassShatter(pane.center, pane.horizontal);
   }
   // Explosion: destroys soft wall cells / hatches / barricades / glass within radius.

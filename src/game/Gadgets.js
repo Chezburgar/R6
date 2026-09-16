@@ -18,7 +18,8 @@ class Entity {
   addCollider(min, max, opts = {}) { this.col = this.game.world.add(new Collider(min, max, { material: opts.material || 'metal', solid: !!opts.solid, penetrable: !!opts.penetrable, blocksVision: false, blocksNav: !!opts.solid, tag: opts.tag || 'gadget', owner: this })); return this.col; }
   onBullet(dmg, shooter, hit) { this.hp -= dmg; if (this.hp <= 0) this.destroy(shooter); }
   onMelee(ch) { this.destroy(ch); }
-  destroy(by) { if (this.dead) return; this.dead = true; if (this.col) this.game.world.remove(this.col); if (this.mesh) this.game.scene.remove(this.mesh); this.onDestroyed && this.onDestroyed(by); }
+  destroy(by) { if (this.dead) return; this.dead = true; if (this.col) this.game.world.remove(this.col); if (this.mesh) this.game.scene.remove(this.mesh); this.onDestroyed && this.onDestroyed(by); if (this.game.net && !this._netGone) { this._netGone = true; this.game.net.onGadgetGone(this, 'destroy'); } }
+  replicaDetonate() { this.destroy(); }
   update(dt) {}
 }
 
@@ -68,6 +69,8 @@ class Grenade extends Entity {
   detonate() {
     if (this.dead) return;
     const g = this.game; const p = this.pos.clone();
+    if (this.mgr.replica) { this.destroy(); return; }
+    const net = g.net; if (net) { this._netGone = true; net.onGadgetGone(this, 'det', p); const fxKind = { frag: 'explosion', impact: 'explosion', nitro: 'explosion', breachRoundProj: 'explosion', stun: 'stun', smoke: 'smoke', emp: 'emp' }[this.type]; if (fxKind) net.onFx(fxKind, p, { s: this.type === 'frag' ? 3 : this.type === 'nitro' ? 3.2 : this.type === 'impact' ? 1.6 : 1.5 }); }
     if (this.type === 'breachRoundProj' || this.type === 'nitro') { if (this.mgr.isJammed(p) && this.type === 'breachRoundProj') { this.destroy(); g.audio.emp(p); return; } }
     switch (this.type) {
       case 'frag': g.effects.explosion(p, 3); g.level.explode(p, 1.6, g.effects); g.ballistics.explode(this.owner, p, 5.5, 130, 'explosion'); g.noise && g.noise(this.owner, 200); break;
@@ -98,7 +101,7 @@ class BreachCharge extends Placed {
     this.game.audio.beep(this.pos, 3000, 0.06, 0.3);
   }
   update() { if (this.owner && this.owner.detonateRequested && !this.dead) { this.owner.detonateRequested = false; this.detonate(); } }
-  detonate() { const p = this.pos.clone().addScaledVector(this.normal, 0.2); this.game.effects.explosion(p, 2.2); this.game.level.explode(this.pos.clone().addScaledVector(this.normal, -0.05), 1.55, this.game.effects); this.game.ballistics.explode(this.owner, p, 3.4, 90); this.mgr.destroyGadgetsNear(p, 2, this.owner); this.destroy(); }
+  detonate() { const p = this.pos.clone().addScaledVector(this.normal, 0.2); this.game.effects.explosion(p, 2.2); if (this.game.net) this.game.net.onFx('explosion', p, { s: 2.2 }); this.game.level.explode(this.pos.clone().addScaledVector(this.normal, -0.05), 1.55, this.game.effects); this.game.ballistics.explode(this.owner, p, 3.4, 90); this.mgr.destroyGadgetsNear(p, 2, this.owner); this.destroy(); }
 }
 
 class Claymore extends Placed {
@@ -173,12 +176,13 @@ class ThermiteCharge extends Placed {
       this.owner.detonateRequested = false;
       if (this.mgr.isJammed(this.pos)) { this.game.audio.emp(this.pos); this.game.hud && this.owner.isPlayer && this.game.hud.toast('CHARGE JAMMED'); return; }
       this.burning = true; this.burnT = 0; this.stopSound = this.game.audio.tool('thermite', this.pos, 4.2); this.game.noise && this.game.noise(this.owner, 120);
+      if (this.game.net) this.game.net.onFx('thermite', this.pos, { n: [this.normal.x, this.normal.y, this.normal.z] });
     }
     if (this.burning) {
       this.burnT += dt; this.game.effects.thermiteBurn(this.pos.clone().addScaledVector(this.normal, 0.05), this.normal, dt);
       if (this.burnT >= 4.0) {
         const p = this.pos.clone().addScaledVector(this.normal, 0.3);
-        this.game.effects.explosion(p, 2.4);
+        this.game.effects.explosion(p, 2.4); if (this.game.net) this.game.net.onFx('explosion', p, { s: 2.4 });
         if (this.wall) { this.wall.breachHole(this.pos, 1.0, 1.1); this.game.level.removeStudsNear(this.pos, 1.1); this.game.level.onWallChanged && this.game.level.onWallChanged(this.wall); }
         if (this.hatch) this.hatch.breach();
         this.game.ballistics.explode(this.owner, p, 3, 70);
@@ -281,11 +285,12 @@ export class GadgetManager {
   constructor(game) {
     this.game = game; this.entities = []; this.smokes = []; this.scans = []; this.equipped = new Map();
     this.hammerT = 0; this.lionState = null;
+    this.replica = !!(game.net && game.net.isClient);   // online client: entities are visual mirrors of the host's
   }
   reset() { for (const e of this.entities) e.destroy(); this.entities.length = 0; this.smokes.length = 0; this.scans.length = 0; this.lionState = null; }
   add(e) { this.entities.push(e); return e; }
   update(dt) {
-    for (const e of this.entities) if (!e.dead) e.update(dt);
+    for (const e of this.entities) if (!e.dead && (!this.replica || e instanceof Grenade)) e.update(dt);
     this.entities = this.entities.filter(e => !e.dead);
     this.smokes = this.smokes.filter(s => s.until > this.game.time);
     if (this.lionState) this._updateLion(dt);
@@ -307,14 +312,16 @@ export class GadgetManager {
       if (intensity < 0.15) continue;
       ch.stunned = Math.max(ch.stunned, 1.2 + intensity * 3.4);
       if (ch.isPlayer) { this.game.hud.stun(intensity); this.game.audio.stun(intensity); }
+      if (this.game.net) this.game.net.onStun(ch, intensity, 1.2 + intensity * 3.4);
     }
   }
   empAt(p, r) {
     for (const e of this.entities) { if (!e.dead && e.side === 'def' && e.pos.distanceTo(p) < r && (e.type === 'mute' || e.type === 'bandit' || e.type === 'kapkan' || e.type === 'claymore')) { e.disabledUntil = this.game.time + 15; this.game.effects.shockSparks(e.pos); } }
-    for (const ch of this.game.characters) if (!ch.dead && ch.side === 'def' && ch.pos.distanceTo(p) < r) { ch.empd = 15; }
+    for (const ch of this.game.characters) if (!ch.dead && ch.side === 'def' && ch.pos.distanceTo(p) < r) { ch.empd = 15; if (this.game.net) this.game.net.onEmp(ch, 15); }
   }
   // Lion scan
   lionScan(ch) {
+    if (this._route({ op: 'lion' }, ch)) return true;
     if (this.lionState) return false;
     this.lionState = { owner: ch, t: 0, phase: 'warn', pinged: new Set() };
     this.game.hud.toast('EE-ONE-D SCAN INCOMING'); this.game.audio.scan();
@@ -325,23 +332,32 @@ export class GadgetManager {
     const L = this.lionState; L.t += dt;
     if (L.phase === 'warn' && L.t > 1.5) { L.phase = 'scan'; L.t = 0; this.game.audio.scan(); }
     else if (L.phase === 'scan') {
-      for (const c of this.game.characters) { if (c.side === 'def' && !c.dead && c.speedNorm > 0.12 && !this.isJammed(c.pos)) { c.pingedUntil = this.game.time + 5; L.pinged.add(c); } }
+      const hit = []; for (const c of this.game.characters) { if (c.side === 'def' && !c.dead && c.speedNorm > 0.12 && !this.isJammed(c.pos)) { c.pingedUntil = this.game.time + 5; if (!L.pinged.has(c)) hit.push(c); L.pinged.add(c); } }
+      if (hit.length && this.game.net) this.game.net.onLionScan('atk', hit);
       if (L.t > 2.0) { L.phase = 'done'; this.lionState = null; }
     }
   }
 
   // ---- placement API (player & bots) ----
-  throwGrenade(type, ch, origin, dir, power = 1) {
+  _route(msg, ch) { const net = this.game.net; if (net && net.isClient && ch === this.game.player.char) { net.sendGadget(msg); return true; } return false; }
+  throwGrenade(type, ch, origin, dir, power = 1, fromNet = false) {
+    if (!fromNet && this._route({ op: 'throw', kind: type, o: [origin.x, origin.y, origin.z], d: [dir.x, dir.y, dir.z], pw: power }, ch)) return null;
     const fuse = type === 'frag' ? 4.0 : type === 'stun' ? 1.8 : type === 'smoke' ? 1.5 : type === 'emp' ? 1.5 : type === 'impact' ? 5 : 99;
     const vel = dir.clone().multiplyScalar((type === 'nitro' ? 9 : 13) * power); vel.y += 1.5;
     const g = new Grenade(this, type, ch, origin.clone().addScaledVector(dir, 0.3), vel, fuse);
-    this.add(g); this.game.audio.click('hover'); return g;
+    this.add(g); this.game.audio.click('hover');
+    if (this.game.net && this.game.net.isHost) this.game.net.onGadgetCreated(g, 'throw', { o2: [origin.x, origin.y, origin.z], d: [dir.x, dir.y, dir.z], pw: power });
+    return g;
   }
-  fireBreachRound(ch, origin, dir) {
+  fireBreachRound(ch, origin, dir, fromNet = false) {
+    if (!fromNet && this._route({ op: 'breach', o: [origin.x, origin.y, origin.z], d: [dir.x, dir.y, dir.z] }, ch)) return null;
     const g = new Grenade(this, 'breachRoundProj', ch, origin.clone().addScaledVector(dir, 0.4), dir.clone().multiplyScalar(38), 6);
-    this.add(g); this.game.audio.gunshot({ cal: '12ga' }, ch.pos, ch.isPlayer); return g;
+    this.add(g); this.game.audio.gunshot({ cal: '12ga' }, ch.pos, ch.isPlayer);
+    if (this.game.net && this.game.net.isHost) this.game.net.onGadgetCreated(g, 'breach', { o2: [origin.x, origin.y, origin.z], d: [dir.x, dir.y, dir.z] });
+    return g;
   }
-  place(type, ch, pos, normal, extra = {}) {
+  place(type, ch, pos, normal, extra = {}, fromNet = false) {
+    if (!fromNet && this.game.net && this.game.net.isClient && ch === this.game.player.char) { const slot = this.equipped.get(ch) || (type === ch.op.gadget ? 'primary' : 'secondary'); this.game.net.sendGadget({ op: 'place', kind: type, p: [pos.x, pos.y, pos.z], n: [normal.x, normal.y, normal.z], x: this.game.net._packExtra(extra), slot }); return { pending: true }; }
     let e = null;
     switch (type) {
       case 'breach': e = new BreachCharge(this, type, ch, pos, normal); break;
@@ -355,11 +371,12 @@ export class GadgetManager {
       case 'bandit': e = new ShockWire(this, type, ch, pos, normal, extra.target); break;
       case 'rook': e = new ArmorPack(this, type, ch, pos, normal); break;
     }
-    if (e) { this.add(e); this.game.audio.click('ui'); }
+    if (e) { this.add(e); this.game.audio.click('ui'); if (this.game.net && this.game.net.isHost) this.game.net.onGadgetCreated(e, 'place', { n: [normal.x, normal.y, normal.z], x: this.game.net._packExtra(extra) }); }
     return e;
   }
   hammerSwing(ch, origin, dir) {
-    const g = this.game; const h = g.world.raycast(origin, dir, 2.0, { filter: c => c.solid || c.tag === 'glass' });
+    const g = this.game;
+    if (this._route({ op: 'hammer', o: [origin.x, origin.y, origin.z], d: [dir.x, dir.y, dir.z] }, ch)) { g.audio.melee(ch.pos, false); return true; } const h = g.world.raycast(origin, dir, 2.0, { filter: c => c.solid || c.tag === 'glass' });
     // enemies
     for (const o of g.characters) { if (o === ch || o.dead) continue; const r = o.raycast(origin, dir, 1.9); if (r) { o.takeDamage(o.dbno ? 200 : 100, 'torso', ch, dir, r.point, 'melee'); g.audio.melee(r.point, true, 'flesh'); g.effects.bloodHit(r.point, dir); return true; } }
     if (!h) { g.audio.melee(ch.pos, false); return false; }
@@ -383,7 +400,7 @@ export class GadgetManager {
     if (!Input.fireHit()) { this.hammerT = Math.max(0, this.hammerT - dt); return; }
     // remote detonate first if something is armed
     const armed = this.entities.find(e => e.owner === C && !e.dead && (e.type === 'breach' || e.type === 'nitro' || (e.type === 'thermite' && !e.burning)));
-    if (armed && ((type === 'breach' && armed.type === 'breach') || (type === 'nitro' && armed.type === 'nitro') || (type === 'thermite' && armed.type === 'thermite'))) { C.detonateRequested = true; g.audio.click('ui'); return; }
+    if (armed && ((type === 'breach' && armed.type === 'breach') || (type === 'nitro' && armed.type === 'nitro') || (type === 'thermite' && armed.type === 'thermite'))) { C.detonateRequested = true; g.audio.click('ui'); if (g.net && g.net.isClient) g.net.sendGadget({ op: 'detonate' }); return; }
     if (usesLeft <= 0) { g.hud.toast('NO GADGETS REMAINING'); return; }
     const consume = () => { if (isPrimary) C.gadgetUses++; else C.gadget2Uses++; g.hud.refreshGadgets(); };
     const surf = g.world.raycast(origin, dir, 2.4, { filter: c => c.solid });

@@ -20,6 +20,9 @@ import { HUD } from '../ui/HUD.js';
 import { Operators, OperatorById, Gadgets as GadgetDefs, SecondaryGadgets } from '../data/operators.js';
 import { Skins } from '../ui/Menu.js';
 import { getMaterial } from '../map/Materials.js';
+import { Net } from '../net/Net.js';
+import { NetSync } from '../net/Sync.js';
+import { Character } from './Character.js';
 import { BARRICADE_BUILD_TIME } from '../map/Level.js';
 
 // Match orchestrator: scene/lighting/post-processing, level lifecycle per round, players
@@ -48,6 +51,7 @@ export class Game {
     this.characters = []; this.bots = []; this.player = null;
     this.audio = AudioEngine; this.audio.losCheck = (p) => this.player ? this.world.visible(this.camera.position, p) : true;
     this.paused = false; this.over = false;
+    this.net = Net.online ? new NetSync(this) : null;
     this._lighting(); this._environment();
     this.resetLevel();
     this.effects = new Effects(this.scene, this.level, this.audio);
@@ -147,6 +151,11 @@ export class Game {
     this.level.onCellDestroyed = (wall, cell) => { this.effects.wallDebris(cell.center, wall.normal, 'drywall'); };
     this.level.onWallChanged = (wall) => { };
     this.level.onBarricadeKnock = (b, pos, fp) => { this.audio.knock(pos, !!fp); };
+    if (this.net && this.net.isHost) {
+      const n = this.net; const L = this.level;
+      L.onCellGone = (wall, cell) => n.onCell(wall, cell); L.onReinforced = (wall) => n.onReinforce(wall); L.onBarricadeOp = (b, op, data) => n.onBarricade(b, op, data);
+      L.onGlassBroken = (pane) => n.onGlass(pane); L.onHatchChanged = (h) => n.onHatch(h); L.onStudsRemoved = (p, r) => n.onStuds(p, r);
+    }
     this.level.onCameraDestroyed = (cam, shooter) => { this.effects.shockSparks && this.effects.shockSparks(cam.pos); this.audio.impact(cam.pos, 'metal'); this.audio.glass && this.audio.glass(cam.pos); if (this.player && this.player.side === 'def') this.hud.toast('CAMERA LOST — ' + cam.name, 2); if (shooter && shooter.isPlayer) this.hud.hitmarker(false, false); };
     this.level.onBarricadeChunk = (pos, normal) => { this.effects.wallDebris(pos, normal || new THREE.Vector3(0, 0, 1), 'wood'); };
     this.nav = new NavGrid(this.world, new THREE.Box3(new THREE.Vector3(-20, 0, -20), new THREE.Vector3(62, 8, 52)), this.level.floorYs);
@@ -172,6 +181,25 @@ export class Game {
     mates.forEach(mk); foes.forEach(mk);
     this.hud.setOperator(op);
   }
+  // Online: every peer builds the same roster in the same order (nid = index). Humans that are not me
+  // become remote characters; bots are real AI on the host and remote characters on clients.
+  setupTeamsNet(roster) {
+    for (const c of this.characters) this.scene.remove(c.root);
+    if (this.player) this.player.dispose();
+    this.characters = []; this.bots = [];
+    const myPid = this.net.myPid;
+    roster.forEach((e, i) => {
+      const op = OperatorById[e.op];
+      let ch;
+      if (e.pid === myPid) { this.player = new Player(this, op, e.side); ch = this.player.char; this.playerOp = op; this.playerLoadout = e.lo; this._equip(ch, e.lo, true); this.match.playerSide = e.side; }
+      else if (e.human || this.net.isClient) { ch = new Character(this, op, e.side, false); ch.remote = true; ch.isHuman = !!e.human; ch.name = e.human ? e.name : op.name; ch.setWeapons([new Weapon(e.lo.primary, ch), new Weapon(e.lo.secondary, ch)]); ch.gadget2 = e.lo.gadget2; this.characters.push(ch); this.scene.add(ch.root); }
+      else { const b = new Bot(this, op, e.side, this.difficulty); this._equip(b.char, e.lo, false); this.bots.push(b); ch = b.char; this.characters.push(ch); this.scene.add(ch.root); }
+      ch.nid = i; ch.pid = e.pid || null; ch.side = e.side; ch.wantsDefuser = !!e.def;
+      if (e.pid === myPid) { this.characters.push(ch); this.scene.add(ch.root); }
+    });
+    this.net.roster = roster;
+    this.hud.setOperator(this.playerOp);
+  }
   _equip(ch, lo, isPlayer) {
     const ws = [new Weapon(lo.primary, ch), new Weapon(lo.secondary, ch)];
     ch.gadget2 = lo.gadget2; ch.gadgetUses = 0; ch.gadget2Uses = 0;
@@ -190,12 +218,12 @@ export class Game {
 
   spawnAll() {
     const M = this.match; const L = this.level; const site = M.site;
-    const atkSpawn = L.spawns.atk[Math.floor(Math.random() * L.spawns.atk.length)];
+    const atkSpawn = L.spawns.atk[M.atkSpawnIdx !== undefined ? M.atkSpawnIdx : Math.floor(Math.random() * L.spawns.atk.length)];
     let ai = 0, di = 0;
     for (const c of this.characters) {
-      c.side = c.op.side; // fixed by operator
-      if (c.side === 'atk') { const p = atkSpawn.points[ai++ % atkSpawn.points.length]; const yaw = Math.atan2(-(L.center.x - p.x), -(L.center.z - p.z)); if (c.isPlayer) this.player.spawn(p, yaw); else c.bot.spawn(p, yaw); }
-      else { const p = this.findClearSpot(site.defSpawns[di++ % site.defSpawns.length]); const yaw = Math.random() * Math.PI * 2; if (c.isPlayer) this.player.spawn(p, yaw); else c.bot.spawn(p, yaw); }
+      if (!this.net) c.side = c.op.side; // fixed by operator
+      if (c.side === 'atk') { const p = atkSpawn.points[ai++ % atkSpawn.points.length]; const yaw = Math.atan2(-(L.center.x - p.x), -(L.center.z - p.z)); if (c.isPlayer) this.player.spawn(p, yaw); else if (c.bot) c.bot.spawn(p, yaw); else { c.reset(p, yaw); c.setVisible(true); } }
+      else { const p = this.findClearSpot(site.defSpawns[di++ % site.defSpawns.length]); const yaw = Math.random() * Math.PI * 2; if (c.isPlayer) this.player.spawn(p, yaw); else if (c.bot) c.bot.spawn(p, yaw); else { c.reset(p, yaw); c.setVisible(true); } }
       c.gadgetUses = 0; c.gadget2Uses = 0; c.hasDefuser = false; c.planting = 0; c.defusing = 0;
       if (c.bot) { c.bot.planBuilt = false; c.bot.plan = []; c.bot.atkPlan = null; c.bot.holdSpot = null; c.bot.coverSpot = null; c.bot.guardSpot = null; }
     }
@@ -258,42 +286,45 @@ export class Game {
   }
   // Contextual ping from a camera ray: enemy under the reticle → red "enemy spotted", otherwise a yellow world ping.
   ping(origin, dir, by) {
+    if (this.net && this.net.isClient && by === this.player.char) { this.net.sendIntel({ op: 'ping', o: [origin.x, origin.y, origin.z], d: [dir.x, dir.y, dir.z] }); return; }
     const max = 50; let best = null;
     for (const ch of this.characters) { if (ch.side === by.side || ch.dead) continue; const r = ch.raycast(origin, dir, max); if (r && (!best || r.dist < best.r.dist)) best = { ch, r }; }
     const h = this.world.raycast(origin, dir, max, { filter: c => c.solid || c.tag === 'glass' });
     if (best && (!h || h.dist > best.r.dist - 0.05)) {
       const ch = best.ch; const pos = ch.pos.clone(); pos.y += 1.3;
       this.pings.push({ kind: 'enemy', pos, t: 5, label: 'ENEMY', by });
+      if (this.net && this.net.isHost) this.net.onPing('enemy', pos, 'ENEMY');
       this.audio.ping('enemy'); this.teamAlert(by.side, ch, ch.pos); if (by.isPlayer) this.hud.toast('ENEMY SPOTTED', 1.2);
-    } else if (h) { this.pings.push({ kind: 'yellow', pos: h.point.clone().addScaledVector(h.normal, 0.05), t: 6, label: '', by }); this.audio.ping('yellow'); }
+    } else if (h) { const pos = h.point.clone().addScaledVector(h.normal, 0.05); this.pings.push({ kind: 'yellow', pos, t: 6, label: '', by }); if (this.net && this.net.isHost) this.net.onPing('yellow', pos, ''); this.audio.ping('yellow'); }
     else { const pos = origin.clone().addScaledVector(dir, 30); this.pings.push({ kind: 'yellow', pos, t: 4, label: '', by }); this.audio.ping('yellow'); }
   }
   // Drone identification: the enemy is marked live for the whole team for a few seconds.
   identify(ch, by) {
-    ch.pingedUntil = this.time + 3.5; ch.identifiedT = this.time;
+    if (this.net && this.net.isClient && by === this.player.char) { this.net.sendIntel({ op: 'ident', n: ch.nid }); ch.pingedUntil = this.time + 3.5; this.audio.identify(); this.hud.toast('IDENTIFIED — ' + ch.name, 1.8); return; }
+    ch.pingedUntil = this.time + 3.5; ch.identifiedT = this.time; if (this.net && this.net.isHost) this.net.onIdentify(ch);
     this.audio.identify(); this.teamAlert(by.side, ch, ch.pos);
     if (by.isPlayer) this.hud.toast('IDENTIFIED — ' + ch.name, 1.8);
   }
 
   // ---------- interactions ----------
-  getInteractions(C, camera) {
-    const out = []; const M = this.match; const eye = camera.getWorldPosition(_v).clone(); const dir = camera.getWorldDirection(_v2).clone();
+  getInteractions(C, camera, reach = 2.3) {
+    const out = []; const M = this.match; const eye = camera.getWorldPosition(_v).clone(); const dir = camera.getWorldDirection(_v2).clone(); const say = (t) => { if (C.isPlayer) this.hud.toast(t); else if (this.net) this.net.toast(C, t); };
     if (C.dbno || C.dead) return out;
     // revive
-    for (const t of this.characters) { if (t.side === C.side && t.dbno && !t.dead && t !== C && t.pos.distanceTo(C.pos) < 1.7) { out.push({ label: 'REVIVE ' + t.name, dur: 5, start: () => { t.reviver = C; }, done: () => { t.revive(); t.reviver = null; C.score += 50; }, cancel: () => { t.reviver = null; } }); break; } }
+    for (const t of this.characters) { if (t.side === C.side && t.dbno && !t.dead && t !== C && t.pos.distanceTo(C.pos) < 1.7) { out.push({ label: 'REVIVE ' + t.name, dur: 5, net: ['revive', t.nid], start: () => { t.reviver = C; }, done: () => { t.revive(); t.reviver = null; C.score += 50; }, cancel: () => { t.reviver = null; } }); break; } }
     // defuser
     const typing = (mesh) => (out) => { M.defuserHandPoint(mesh, out); out.y += 0.04 + Math.abs(Math.sin(this.time * 9)) * 0.05; out.x += Math.sin(this.time * 3.1) * 0.03; out.z += Math.cos(this.time * 2.3) * 0.03; return out; };
-    const b = M.canPlant(C); if (b) out.push({ label: 'PLANT DEFUSER', dur: M.s.plantTime, crouch: true, start: () => { C.planting = 0.001; C.plantSound = this.audio.tool('plant', C.pos, M.s.plantTime); this.noise(C, 40); M.placeDevice(C); }, hand: (o) => C.plantDevice ? typing(C.plantDevice)(o) : o.copy(C.pos), done: () => { M._plant(C, b); }, cancel: () => { M.cancelPlant(C); if (C.plantSound) C.plantSound(); } });
-    if (M.canDefuse(C)) out.push({ label: 'DISABLE DEFUSER', dur: M.s.defuseTime, crouch: true, start: () => { this._defuseStop = this.audio.tool('defuse', M.defuser.pos, M.s.defuseTime); }, hand: (o) => typing(M.defuser.mesh)(o), done: () => { C.score += 100; M.endRound(M.defTeam, 'DEFUSER DISABLED'); }, cancel: () => { this._defuseStop && this._defuseStop(); } });
-    if (M.defuserDropped && C.side === 'atk' && M.defuserDropped.pos.distanceTo(C.pos) < 1.6) out.push({ label: 'PICK UP DEFUSER', dur: 0, done: () => { M.pickupDefuser(C); this.hud.refreshGadgets(); } });
+    const b = M.canPlant(C); if (b) out.push({ label: 'PLANT DEFUSER', dur: M.s.plantTime, crouch: true, net: ['plant', b.label], start: () => { C.planting = 0.001; C.plantSound = this.audio.tool('plant', C.pos, M.s.plantTime); this.noise(C, 40); M.placeDevice(C); }, hand: (o) => C.plantDevice ? typing(C.plantDevice)(o) : o.copy(C.pos), done: () => { M._plant(C, b); }, cancel: () => { M.cancelPlant(C); if (C.plantSound) C.plantSound(); } });
+    if (M.canDefuse(C)) out.push({ label: 'DISABLE DEFUSER', dur: M.s.defuseTime, crouch: true, net: ['defuse', 0], start: () => { this._defuseStop = this.audio.tool('defuse', M.defuser.pos, M.s.defuseTime); }, hand: (o) => typing(M.defuser.mesh)(o), done: () => { C.score += 100; M.endRound(M.defTeam, 'DEFUSER DISABLED'); }, cancel: () => { this._defuseStop && this._defuseStop(); } });
+    if (M.defuserDropped && C.side === 'atk' && M.defuserDropped.pos.distanceTo(C.pos) < 1.6) out.push({ label: 'PICK UP DEFUSER', dur: 0, net: ['pickup', 0], done: () => { M.pickupDefuser(C); this.hud.refreshGadgets(); } });
     // armor pack
-    for (const e of this.gadgets.entities) { if (e.type === 'rook' && !e.dead && e.side === C.side && !C.armorPlate && e.pos.distanceTo(C.pos) < 1.6) { out.push({ label: 'TAKE ARMOR PLATE', dur: 0.8, done: () => { e.take(C); this.hud.toast('ARMOR PLATE EQUIPPED'); } }); break; } }
+    for (const e of this.gadgets.entities) { if (e.type === 'rook' && !e.dead && e.side === C.side && !C.armorPlate && e.pos.distanceTo(C.pos) < 1.6) { out.push({ label: 'TAKE ARMOR PLATE', dur: 0.8, net: ['armor', e.nid || 0], done: () => { e.take(C); say('ARMOR PLATE EQUIPPED'); } }); break; } }
     // level
-    const its = this.level.findInteractable(eye, dir, C.side, 2.3);
+    const its = this.level.findInteractable(eye, dir, C.side, reach);
     for (const it of its) {
-      if (it.type === 'reinforce' && M.reinforcementsLeft > 0 && (M.phase === 'prep' || M.phase === 'action' || M.phase === 'planted')) { out.push({ label: 'REINFORCE WALL', dur: 5, start: () => { it.stop = this.audio.tool('reinforce', it.wall.center, 5); }, done: () => { M.reinforce(it.wall, C); this.effects.impact(it.point, it.normal, 'metal'); }, cancel: () => it.stop && it.stop() }); break; }
-      if (it.type === 'barricade') { const b = it.slot.barricade; out.push({ label: 'BARRICADE', dur: BARRICADE_BUILD_TIME, start: () => { b.beginBuild(C.pos, true); this.noise(C, 20); }, progress: (t, dt) => b.setProgress(t, dt), hand: (out) => b.handPoint(out), done: () => { b.finish(); }, cancel: () => b.cancelBuild() }); break; }
-      if (it.type === 'hatchReinforce' && M.reinforcementsLeft > 0) { out.push({ label: 'REINFORCE HATCH', dur: 3.5, start: () => { it.stop = this.audio.tool('reinforce', it.hatch.center, 3.5); }, done: () => { if (it.hatch.reinforce()) { M.reinforcementsLeft--; this.hud.refreshGadgets(); } }, cancel: () => it.stop && it.stop() }); break; }
+      if (it.type === 'reinforce' && M.reinforcementsLeft > 0 && (M.phase === 'prep' || M.phase === 'action' || M.phase === 'planted')) { out.push({ label: 'REINFORCE WALL', dur: 5, net: ['reinforce', it.wall.id], start: () => { it.stop = this.audio.tool('reinforce', it.wall.center, 5); }, done: () => { M.reinforce(it.wall, C); this.effects.impact(it.point, it.normal, 'metal'); }, cancel: () => it.stop && it.stop() }); break; }
+      if (it.type === 'barricade') { const b = it.slot.barricade; out.push({ label: 'BARRICADE', dur: BARRICADE_BUILD_TIME, net: ['barricade', this.level.barricadeSlots.indexOf(it.slot)], localDone: true, start: () => { b.beginBuild(C.pos, true); this.noise(C, 20); }, progress: (t, dt) => b.setProgress(t, dt), hand: (out) => b.handPoint(out), done: () => { b.finish(); }, cancel: () => b.cancelBuild() }); break; }
+      if (it.type === 'hatchReinforce' && M.reinforcementsLeft > 0) { out.push({ label: 'REINFORCE HATCH', dur: 3.5, net: ['hatchReinforce', this.level.hatches.indexOf(it.hatch)], start: () => { it.stop = this.audio.tool('reinforce', it.hatch.center, 3.5); }, done: () => { if (it.hatch.reinforce()) { M.reinforcementsLeft--; this.hud.refreshGadgets(); } }, cancel: () => it.stop && it.stop() }); break; }
     }
     return out;
   }
@@ -301,6 +332,7 @@ export class Game {
   // ---------- events ----------
   onDeath(victim, killer, headshot) {
     const w = killer && killer.weapon ? killer.weapon.def.name : '';
+    if (this.net && this.net.isHost) this.net.onDeath(victim, killer, headshot, w);
     this.hud.feed(killer, victim, w, headshot);
     if (victim.hasDefuser) this.match.dropDefuser(victim);
     if (victim.isPlayer) { this.stats.deaths++; this.hud.big('YOU WERE KILLED', killer ? 'BY ' + killer.name : '', 3); this.player.dead = true; this.player._deathT = 0; this.hud.prompt(null); this.hud.progress(-1); if (this.player.interaction) this.player._cancelInteraction(); }
@@ -309,13 +341,14 @@ export class Game {
     this.noise(victim, 12);
   }
   onDBNO(victim, attacker) {
+    if (this.net && this.net.isHost) this.net.onDBNO(victim, attacker, attacker && attacker.weapon ? attacker.weapon.def.name : '');
     this.hud.feed(attacker, { name: victim.name + ' (DOWNED)', side: victim.side }, attacker && attacker.weapon ? attacker.weapon.def.name : '', false);
     if (victim.hasDefuser) this.match.dropDefuser(victim);
     if (victim.isPlayer) { this.hud.big('DOWNED', 'CRAWL TO SAFETY — WAIT FOR REVIVE', 3); if (this.player.interaction) this.player._cancelInteraction(); this.player.adsBlend = 0; }
     if (attacker && attacker.isPlayer) this.hud.hitmarker(true, false);
     if (victim.bot) victim.bot.stop();
   }
-  onRevived(ch) { if (ch.isPlayer) this.hud.toast('REVIVED'); }
+  onRevived(ch) { if (ch.isPlayer) this.hud.toast('REVIVED'); if (this.net && this.net.isHost) this.net.onRevive(ch); }
   onPlayerHit(target, zone, dmg) { this.hud.hitmarker(false, zone === 'head'); }
   onPlayerShot(w) {}
   teamAlert(side, enemy, pos) { for (const b of this.bots) if (b.char.side === side && !b.char.dead) b.callout(enemy, pos); }
@@ -326,9 +359,11 @@ export class Game {
     this.app.roundEnd(playerWon, reason, M);
     Input.unlock();
   }
-  onOperatorSelect() { this.app.operatorSelectRound(); }
+  onOperatorSelect() { if (this.net && this.net.isHost) { Net.broadcast({ t: 'opselect', round: this.match.round }); } this.app.operatorSelectRound(); }
   onSideSwap() { this.hud.toast('SIDES SWAPPED', 3); }
   onMatchEnd(playerWon) { this.over = true; this.app.matchEnd(playerWon, this.match, this.stats); }
+  // Online client: the host says the round is over → operator select
+  netOpSelect() { if (this.match.phase === 'matchEnd') return; this.match.netNextRound(); }
 
   // ---------- frame ----------
   update(dt) {
@@ -347,7 +382,8 @@ export class Game {
     this._cullLights(dt);
     P.update(dt);
     for (const b of this.bots) b.update(dt);
-    this._separate();
+    if (!(this.net && this.net.isClient)) this._separate();
+    if (this.net) this.net.tick(dt);
     this.gadgets.update(dt);
     // trapped players stay put; wire slow decay
     P.char.wire = Math.max(0, P.char.wire - dt);

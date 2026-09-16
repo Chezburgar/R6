@@ -8,6 +8,7 @@ import { Character } from '../game/Character.js';
 import { Weapon } from '../game/Weapon.js';
 import { AudioEngine } from '../core/AudioEngine.js';
 import { Input } from '../core/Input.js';
+import { Net } from '../net/Net.js';
 import { getSprite } from '../map/Materials.js';
 
 // Front-end: home / play (custom game) / operators / shop / settings, the 3D menu backdrop
@@ -43,7 +44,7 @@ export class Menu {
   topbar(active) {
     const s = this.settings;
     return `<div class="topbar"><div class="logo"><span class="tc">TOM CLANCY'S</span><span class="r6">RAINBOW<em>SIX</em>SIEGE</span></div>
-      <nav>${['play', 'operators', 'shop'].map(p => `<button data-page="${p}" class="${active === p ? 'active' : ''}">${p.toUpperCase()}</button>`).join('')}</nav>
+      <nav>${['play', 'online', 'operators', 'shop'].map(p => `<button data-page="${p}" class="${active === p ? 'active' : ''}">${p.toUpperCase()}</button>`).join('')}</nav>
       <div class="right"><div class="wallet"><span class="cur">${icon('renown')}<span>${s.renown.toLocaleString()}</span></span><span class="cur">${icon('credits')}<span>${s.credits.toLocaleString()}</span></span></div><div class="avatar">${s.name.slice(0, 1).toUpperCase()}</div><button class="gear" data-action="settings" title="Settings">${icon('gear')}</button></div></div>
       <div class="subhead">${s.name.toUpperCase()}'S CUSTOM GAME</div>`;
   }
@@ -55,6 +56,7 @@ export class Menu {
     else if (p === 'play') body += this.playHTML();
     else if (p === 'operators') body += this.opsHTML();
     else if (p === 'shop') body += this.shopHTML();
+    else if (p === 'online') body += this.onlineHTML();
     body += `<div class="bottom-hint"><span><b>ESC</b>BACK</span><span><b>ENTER</b>SELECT</span></div><div class="ver">R6 BROWSER · BUILD 1.0</div>`;
     this.el.innerHTML = body;
     this.bind();
@@ -69,7 +71,7 @@ export class Menu {
         <button class="tile sq" data-page="operators" title="Operators">${icon('ops')}</button>
         <button class="tile sq" data-action="settings" title="Settings">${icon('gear')}</button>
         <button class="tile sq" data-action="stats" title="Career">${icon('cup')}</button>
-        <button class="tile wide" data-action="credits"><small>UBISOFT</small>CLUB</button>
+        <button class="tile wide" data-page="online"><small>PLAY</small>ONLINE</button>
         <button class="tile news" data-page="play"><div class="ghost">SIEGE<br>BORDER</div><div class="plus">+</div></button>
       </div>`;
   }
@@ -94,6 +96,31 @@ export class Menu {
       </div>`;
   }
 
+  onlineHTML() {
+    const s = this.settings; const g = s.game; const me = Net.isHost ? 'host' : Net.id;
+    const seg = (key, opts) => `<div class="seg" data-seg="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${g[key] === v ? 'on' : ''}" ${Net.isClient ? 'disabled' : ''}>${l}</button>`).join('')}</div>`;
+    const roster = Net.players.map(p => `<div class="lp ${p.side} ${p.id === me ? 'me' : ''}" data-pid="${p.id}"><span class="side">${p.side === 'atk' ? 'ATK' : 'DEF'}</span><span class="nm">${p.name}${p.host ? ' <small>HOST</small>' : ''}${p.id === me ? ' <small>YOU</small>' : ''}</span><span class="sw">${p.id === me ? 'SWITCH SIDE' : ''}</span></div>`).join('');
+    const atk = Net.players.filter(p => p.side === 'atk').length, def = Net.players.filter(p => p.side === 'def').length;
+    return `<div class="h1">ONLINE</div>
+      <div class="play-wrap">
+        <div class="panel"><h3>${Net.online ? (Net.isHost ? 'ROOM ' + Net.code : 'ROOM ' + Net.code + ' — JOINED') : 'PLAY WITH FRIENDS'}</h3>
+          ${Net.online ? '' : `<div class="setting"><span class="label">Your name</span><input type="text" id="on-name" value="${s.name}" maxlength="16" style="width:160px"></div>
+          <div class="setting"><span class="label">Host a room</span><button class="btn primary" data-action="host">CREATE ROOM</button></div>
+          <div class="setting"><span class="label">Join a room</span><span><input type="text" id="on-code" placeholder="CODE" maxlength="5" style="width:110px;text-transform:uppercase;letter-spacing:.3em"> <button class="btn" data-action="join">JOIN</button></span></div>
+          <div class="value" style="font-size:12px;line-height:1.6;color:#8a8f99;margin-top:10px">Peer-to-peer over WebRTC. The host runs the match; give friends the 5-letter code. Up to 10 players, empty slots are filled with AI.</div>`}
+          ${Net.online ? `<div class="value" style="font-size:12px;color:#9fd8ff;margin-bottom:8px" id="on-status">${this.netStatus || ''}</div>
+          <div class="lobby">${roster || '<div class="value">waiting for the room…</div>'}</div>
+          <div class="value" style="font-size:12px;color:#8a8f99;margin-top:6px">${atk} attacker${atk === 1 ? '' : 's'} · ${def} defender${def === 1 ? '' : 's'} · AI fills the rest</div>
+          <div class="play-actions" style="margin-top:14px">${Net.isHost ? '<button class="btn primary" data-action="startOnline">START MATCH</button>' : '<span class="value">waiting for the host to start</span>'}<button class="btn danger" data-action="leaveRoom">LEAVE ROOM</button></div>` : ''}
+        </div>
+        <div class="panel"><h3>MATCH SETTINGS ${Net.isClient ? '(HOST)' : ''}</h3>
+          <div class="setting"><span class="label">Playlist</span>${seg('preset', [['casual', 'Quick'], ['ranked', 'Ranked'], ['quick', 'Lightning']])}</div>
+          <div class="setting"><span class="label">Bomb site</span>${seg('site', [['random', 'Random'], ...SITES.map(x => [x.id, x.rooms[0].toUpperCase()])])}</div>
+          <div class="setting"><span class="label">AI difficulty</span>${seg('difficulty', [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}</div>
+          <div class="setting"><span class="label">Format</span><span class="value">${Presets[g.preset].name} · FIRST TO ${Presets[g.preset].roundsToWin} · SWAP AFTER ${Presets[g.preset].swapAfter}</span></div>
+        </div>
+      </div>`;
+  }
   opsHTML() {
     const op = OperatorById[this.selectedOp];
     const grid = side => `<div class="ops-grid">${Operators.filter(o => o.side === side).map(o => `<button class="opbtn ${o.id === this.selectedOp ? 'sel' : ''}" data-op="${o.id}" title="${o.name}">${icon(o.icon)}</button>`).join('')}${Array.from({ length: Math.max(0, 8 - Operators.filter(o => o.side === side).length) }).map(() => `<div class="opbtn locked" style="opacity:.25"></div>`).join('')}</div>`;
@@ -129,14 +156,19 @@ export class Menu {
     E.querySelectorAll('[data-page]').forEach(b => b.addEventListener('click', () => { AudioEngine.click('ui'); this.showPage(b.dataset.page); }));
     E.querySelectorAll('button,.tile,.skin,.opbtn').forEach(b => b.addEventListener('mouseenter', () => AudioEngine.click('hover')));
     E.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', () => { AudioEngine.click('ui'); this.action(b.dataset.action); }));
-    E.querySelectorAll('[data-seg]').forEach(seg => seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { AudioEngine.click('ui'); this.settings.game[seg.dataset.seg] = b.dataset.v; this.app.saveSettings(); this.render(); })));
+    E.querySelectorAll('[data-seg]').forEach(seg => seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { if (b.disabled) return; AudioEngine.click('ui'); this.settings.game[seg.dataset.seg] = b.dataset.v; this.app.saveSettings(); if (Net.isHost) Net.setSettings(this.settings.game); this.render(); })));
     E.querySelectorAll('[data-op]').forEach(b => b.addEventListener('click', () => { AudioEngine.click('ui'); this.selectedOp = b.dataset.op; this.render(); }));
     E.querySelectorAll('[data-lo]').forEach(seg => seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { AudioEngine.click('ui'); this.loadoutFor(this.selectedOp)[seg.dataset.lo] = b.dataset.v; this.settings.loadouts = this.loadouts; this.app.saveSettings(); this.render(); })));
+    E.querySelectorAll('.lp.me').forEach(b => b.addEventListener('click', () => { const me = Net.players.find(p => p.id === (Net.isHost ? 'host' : Net.id)); if (me) Net.setSide(me.id, me.side === 'atk' ? 'def' : 'atk'); }));
     E.querySelectorAll('[data-skin]').forEach(b => b.addEventListener('click', () => { AudioEngine.click('ui'); this.settings.skin = b.dataset.skin; this.app.saveSettings(); this.render(); this.app.menuScene && this.app.menuScene.applySkin(); }));
     const mp = E.querySelector('#map-preview'); if (mp) this.drawMapPreview(mp);
   }
   action(a) {
     if (a === 'start') this.app.startMatch();
+    else if (a === 'host') { const n = this.el.querySelector('#on-name'); if (n) { this.settings.name = n.value || 'Host'; this.app.saveSettings(); } this.app.hostRoom(); }
+    else if (a === 'join') { const n = this.el.querySelector('#on-name'), c = this.el.querySelector('#on-code'); if (n) { this.settings.name = n.value || 'Player'; this.app.saveSettings(); } this.app.joinRoom(c ? c.value : ''); }
+    else if (a === 'leaveRoom') { Net.leave(); this.render(); }
+    else if (a === 'startOnline') this.app.startOnlineMatch();
     else if (a === 'settings') this.app.openSettings();
     else if (a === 'controls') this.app.openControls();
     else if (a === 'credits') this.app.overlay('UBISOFT CLUB', `<p style="font-family:var(--font);line-height:1.6;color:#c5c9d1">A browser recreation of Tom Clancy's Rainbow Six Siege built for this project. Operators and weapons are rendered from the supplied models; everything else — Border, destruction, ballistics, AI and audio — is generated at runtime.</p><p style="font-family:var(--font);line-height:1.6;color:#c5c9d1">Rainbow Six Siege is a trademark of Ubisoft Entertainment. This is a fan project.</p>`);

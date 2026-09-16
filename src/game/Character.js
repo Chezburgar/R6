@@ -50,6 +50,7 @@ export class Character {
     this.reviveProgress = 0; this.reviver = null;
     this.tags = new Set();
     this.lowReady = 0; this.lowReadyTarget = 0;   // 1 = weapon held at low-ready (idle), 0 = shouldered/aiming
+    this.nid = -1; this.pid = null; this.remote = false; this.isHuman = isPlayer;   // online identity
     this._build();
   }
 
@@ -368,6 +369,7 @@ export class Character {
       else this.goDBNO(attacker, dir);
     }
     this.onDamaged && this.onDamaged(dmg, attacker, dir, zone);
+    if (this.game.net) this.game.net.onDamage(this, dmg, attacker);
     return dmg;
   }
   goDBNO(attacker, dir) {

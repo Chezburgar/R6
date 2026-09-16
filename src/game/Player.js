@@ -382,6 +382,7 @@ export class Player {
   _meleeResolve() {
     const g = this.game; const C = this.char;
     const origin = this.camera.getWorldPosition(_v); const dir = this.camera.getWorldDirection(_v2);
+    if (g.net && g.net.isClient) { g.net.sendMelee(origin, dir); return; }   // the host swings for me
     // enemies first
     let best = null;
     for (const ch of g.characters) { if (ch === C || ch.dead) continue; const r = ch.raycast(origin, dir, 1.7); if (r && (!best || r.dist < best.r.dist)) best = { ch, r }; }
@@ -406,7 +407,7 @@ export class Player {
       if (this.interaction.progress) this.interaction.progress(Math.min(1, this.interactT / this.interactDur), dt);
       const ok = Input.down('interact') || this.interaction.sticky;
       if (!ok || C.dead || C.dbno) { this._cancelInteraction(); return; }
-      if (this.interactT >= this.interactDur) { const it = this.interaction; this.interaction = null; hud.progress(-1); it.done(); }
+      if (this.interactT >= this.interactDur) { const it = this.interaction; this.interaction = null; hud.progress(-1); const net = g.net; if (net && net.isClient && it.net) { net.sendAct(it.net, 'done'); if (it.localDone) it.done(); } else it.done(); }
       return;
     }
     if (C.dead || this.rappel || this.usingDrone) return;
@@ -416,11 +417,13 @@ export class Player {
     const it = opts[0];
     hud.prompt('F', it.label + (it.dur ? '' : ''));
     if (Input.hit('interact') && !C.dbno) {
-      if (it.dur > 0) { this.interaction = it; this.interactT = 0; this.interactDur = it.dur; this.adsBlend = 0; it.start && it.start(); }
+      const net = g.net;
+      if (it.dur > 0) { this.interaction = it; this.interactT = 0; this.interactDur = it.dur; this.adsBlend = 0; if (net && net.isClient && it.net) net.sendAct(it.net, 'start'); it.start && it.start(); }
+      else if (net && net.isClient && it.net) net.sendAct(it.net, 'done');
       else it.done();
     }
   }
-  _cancelInteraction() { const it = this.interaction; this.interaction = null; this.game.hud.progress(-1); it && it.cancel && it.cancel(); }
+  _cancelInteraction() { const it = this.interaction; this.interaction = null; this.game.hud.progress(-1); const net = this.game.net; if (it && net && net.isClient && it.net) net.sendAct(it.net, 'cancel'); it && it.cancel && it.cancel(); }
 
   // ---------- camera ----------
   _placeCamera(dt) {

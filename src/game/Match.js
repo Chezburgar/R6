@@ -32,20 +32,22 @@ export class Match {
   scoreFor(side) { return side === this.playerSide ? this.score.A : this.score.B; }
 
   // Called after operator select each round.
-  startRound() {
+  startRound(net = null) {
     const g = this.game;
     this.round++; this.planted = false; this.defuser = null; this.defuserDropped = null; this.reinforcementsLeft = 10; this.winner = null; this.reason = '';
     g.resetLevel(); g.gadgets.reset();
-    // site: chosen or random
-    const sites = g.level.sites; this.site = this.s.site && this.s.site !== 'random' ? sites.find(s => s.id === this.s.site) : sites[Math.floor(Math.random() * sites.length)];
+    // site: chosen or random (online: the host's pick arrives with the round)
+    const sites = g.level.sites; this.site = net && net.site ? sites.find(s => s.id === net.site) : (this.s.site && this.s.site !== 'random' ? sites.find(s => s.id === this.s.site) : sites[Math.floor(Math.random() * sites.length)]);
+    this.atkSpawnIdx = net && net.spawn !== undefined ? net.spawn : Math.floor(Math.random() * g.level.spawns.atk.length);
     this.site.bombs.forEach(b => { b.planted = false; b.device = this._bombDevice(b); });
     g.defensePlan = new DefensePlan(g, this.site); g.attackPlan = new AttackPlan(g, this.site);
     g.spawnAll();
     // the defuser: whoever picked it up in operator select, otherwise a random attacker
     const atk = g.characters.filter(c => c.side === 'atk');
     const pl = atk.find(c => c.isPlayer);
-    const holder = (pl && g.playerWantsDefuser) ? pl : atk[Math.floor(Math.random() * atk.length)];
-    if (holder) holder.hasDefuser = true;
+    let holder = net && net.defuserNid !== undefined ? atk.find(c => c.nid === net.defuserNid) : null;
+    if (!holder && !(net && g.net && g.net.isClient)) { const wants = atk.filter(c => c.isPlayer ? g.playerWantsDefuser : c.wantsDefuser); holder = wants.length ? wants[Math.floor(Math.random() * wants.length)] : atk[Math.floor(Math.random() * atk.length)]; }
+    if (holder) holder.hasDefuser = true; this.defuserNid = holder ? holder.nid : -1;
     g.hud.refreshGadgets();
     this.phase = 'prep'; this.timeLeft = this.s.prepTime;
     g.hud.phase('PREPARATION PHASE', this.site.name);
@@ -55,6 +57,7 @@ export class Match {
 
   update(dt) {
     const g = this.game;
+    if (g.net && g.net.isClient) return;   // phases, timers and outcomes arrive from the host
     if (this.phase === 'prep') {
       this.timeLeft -= dt;
       if (this.timeLeft <= 0) this._startAction();
@@ -120,6 +123,7 @@ export class Match {
     if (ch.plantDevice) { g.scene.remove(ch.plantDevice); ch.plantDevice = null; }
     this.defuser = { pos, planter: ch, mesh: this._defuserMesh(pos, yaw), progress: 0 };
     g.scene.add(this.defuser.mesh);
+    if (g.net) g.net.onPlant(ch, pos, yaw, b.label, this.timeLeft);
     g.hud.phase('DEFUSER PLANTED', 'BOMB ' + b.label + ' — ' + b.room.name.toUpperCase());
     g.hud.big(this.playerSide === 'atk' ? 'DEFUSER PLANTED' : 'DEFUSER PLANTED', this.playerSide === 'atk' ? 'DEFEND THE DEFUSER' : 'DISABLE THE DEFUSER', 3);
     g.audio.beep(pos, 3200, 0.3, 0.6); g.noise && g.noise(ch, 80);
@@ -175,9 +179,10 @@ export class Match {
     if (!ch.hasDefuser) return; ch.hasDefuser = false;
     const pos = ch.pos.clone(); const mesh = this._defuserMesh(pos); this.game.scene.add(mesh);
     this.defuserDropped = { pos, mesh };
+    if (this.game.net) this.game.net.onDropped(pos);
     this.game.hud.toast('DEFUSER DROPPED');
   }
-  pickupDefuser(ch) { if (!this.defuserDropped || ch.side !== 'atk' || ch.dead || ch.dbno) return false; this.game.scene.remove(this.defuserDropped.mesh); this.defuserDropped = null; ch.hasDefuser = true; this.game.audio.click('ui'); if (ch.isPlayer) this.game.hud.toast('DEFUSER PICKED UP'); return true; }
+  pickupDefuser(ch) { if (!this.defuserDropped || ch.side !== 'atk' || ch.dead || ch.dbno) return false; this.game.scene.remove(this.defuserDropped.mesh); this.defuserDropped = null; ch.hasDefuser = true; this.game.audio.click('ui'); if (ch.isPlayer) this.game.hud.toast('DEFUSER PICKED UP'); if (this.game.net) this.game.net.onPickup(ch); return true; }
 
   reinforce(wall, ch) { if (this.reinforcementsLeft <= 0 || wall.reinforced) return false; if (wall.reinforce()) { this.reinforcementsLeft--; this.game.hud.refreshGadgets(); return true; } return false; }
 
@@ -185,6 +190,7 @@ export class Match {
   endRound(team, reason) {
     if (this.phase === 'roundEnd' || this.phase === 'matchEnd') return;
     const g = this.game;
+    if (g.net && g.net.isHost) g.net.onRoundEnd(this.sideOfTeam(team), reason);
     this.score[team]++; this.winner = team; this.reason = reason;
     this.history.push({ round: this.round, winner: team, reason, playerSide: this.playerSide });
     const playerWon = team === 'A';
@@ -202,6 +208,8 @@ export class Match {
     this.phase = 'opselect';
     this.game.onOperatorSelect();
   }
+  // online client: the host says the round is over and operator select begins
+  netNextRound() { if (this.phase !== 'opselect') this._nextRound(); }
 }
 
 // ---------------------------------------------------------------------------------------------

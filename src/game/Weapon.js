@@ -89,6 +89,10 @@ export class Ballistics {
   // Hitscan with penetration. Applies damage, surface effects, decals and sounds.
   shoot(shooter, origin, dir, def, opts = {}) {
     const game = this.game; const world = game.world; const level = game.level; const fx = game.effects;
+    const net = game.net; const cosmetic = !!opts.cosmetic;
+    // online client: the host resolves my shots; locally only the effects play
+    if (net && net.isClient && !cosmetic) { if (shooter === game.player.char) net.sendFire(origin, dir, def, opts); return this.shoot(shooter, origin, dir, def, { ...opts, cosmetic: true }); }
+    if (net && net.isHost && !cosmetic) net.onShot(shooter, origin, dir, def, opts);
     const maxDist = 120;
     const hits = world.trace(origin, dir, maxDist, { filter: c => c.solid || c.tag === 'glass' || c.tag === 'shield' || c.tag === 'gadget' || c.tag === 'barricade' });
     // stop distance: first non-penetrable or end of list
@@ -111,8 +115,9 @@ export class Ballistics {
       if (h.dist > endDist + 1e-3) break;
       if (h.entry) {
         const c = h.collider;
-        if ((c.tag === 'gadget' || c.tag === 'camera') && c.owner && c.owner.onBullet) { c.owner.onBullet(def.dmg * mult, shooter, h); }
         if (opts.fxDist === undefined || h.dist < 60) fx.impact(h.point, h.normal, c.material);
+        if (cosmetic) { level.addBulletHole(h.point, h.normal, c.material === 'drywall' ? 0.075 : 0.055); if (c.penetrable) mult *= c.penMult; continue; }
+        if ((c.tag === 'gadget' || c.tag === 'camera') && c.owner && c.owner.onBullet) { c.owner.onBullet(def.dmg * mult, shooter, h); }
         level.bulletHit(h, fx);
         if (c.tag === 'shield' && c.owner && c.owner.onBullet) c.owner.onBullet(def.dmg, shooter, h);
         if (c.penetrable) mult *= c.penMult;
@@ -126,6 +131,7 @@ export class Ballistics {
       const dist = _u.copy(origin).addScaledVector(dir, t).distanceTo(eye);
       if (dist < 1.4 && t > 2) game.audio.whizz(_u);
     }
+    if (target && tHit && cosmetic) { fx.bloodHit(tHit.point, dir); game.audio.impact(tHit.point, 'flesh'); return { target, zone: tHit.zone, dist: tHit.dist, dmg: 0 }; }
     if (target && tHit) {
       // falloff
       const [f0, f1, fmin] = def.fall; const d = tHit.dist;
@@ -133,6 +139,7 @@ export class Ballistics {
       let dmg = def.dmg * fm * mult;
       if (shooter && shooter.dmgMult) dmg *= shooter.dmgMult;
       const dealt = target.takeDamage(dmg, tHit.zone, shooter, dir, tHit.point, 'bullet');
+      if (net) net.onHit(target, shooter, tHit.point, dir, tHit.zone);
       fx.bloodHit(tHit.point, dir);
       game.audio.impact(tHit.point, 'flesh');
       if (shooter === P) game.onPlayerHit && game.onPlayerHit(target, tHit.zone, dealt);

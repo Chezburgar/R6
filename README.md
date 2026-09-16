@@ -20,6 +20,11 @@ deployed as a static site on GitHub Pages. 5 attackers vs 5 defenders, Bomb mode
 - **Audio**: fully procedural — layered gunshots (crack / blast / thump / mechanical), distance filtering and delay,
   convolution reverb, footsteps by surface, reloads, explosions, gadgets and UI.
 
+## Online
+Home → ONLINE. One player creates a room (5-letter code), friends join with the code; empty slots are filled with AI.
+Peer-to-peer WebRTC via the public PeerJS broker — the host runs the authoritative match (bots, hits, destruction,
+gadgets, round flow); clients own their own movement and send their actions. Click your row in the lobby to switch side.
+
 ## Controls
 WASD move · Shift sprint · C crouch · Z prone · Q / E lean · Space vault (or enter a window while rappelling) ·
 F interact / rappel · RMB aim · LMB fire · R reload · B fire mode · V melee · 1 / 2 weapons · 3 unique gadget ·

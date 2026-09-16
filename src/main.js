@@ -6,6 +6,7 @@ import { Menu, MenuScene, OperatorSelect } from './ui/Menu.js';
 import { Game } from './game/Game.js';
 import { Operators, OperatorById } from './data/operators.js';
 import { getMaterial } from './map/Materials.js';
+import { Net } from './net/Net.js';
 
 const MANIFEST = {
   wpn_ar: 'assets/models/weapons/ar.glb', wpn_smg: 'assets/models/weapons/smg.glb', wpn_shotgun: 'assets/models/weapons/shotgun.glb', wpn_pistol: 'assets/models/weapons/pistol.glb',
@@ -70,6 +71,63 @@ class App {
     if (this.game) this.game.resize(w, h);
   }
 
+  // ---------- online ----------
+  _netUI() {
+    Net.onLobby = () => { if (this.mode === 'menu' && this.menu.page === 'online') this.menu.render(); };
+    Net.onStatus = (s) => { this.menu.netStatus = s; const el = document.getElementById('on-status'); if (el) el.textContent = s; if (this.mode === 'menu' && this.menu.page === 'online' && !el) this.menu.render(); };
+    Net.onError = (m) => { this.menu.netStatus = m; if (this.mode === 'menu') { this.overlay('ONLINE', `<p style="font-family:var(--font);color:#c5c9d1">${m}</p>`); this.menu.render(); } };
+    Net.on('start', d => { if (!Net.isClient) return; this.settings.game = { ...this.settings.game, ...d.settings }; this._beginOnline(); });
+    Net.on('round', d => { if (!Net.isClient || !this.game) return; this._closeWait(); this._startNetRound(d); });
+    Net.on('opselect', d => { if (!Net.isClient || !this.game) return; this.game.netOpSelect(); });
+    Net.on('hostLeft', () => { if (this.game) { this.leaveMatch(); this.overlay('ONLINE', '<p style="font-family:var(--font);color:#c5c9d1">The host left the match.</p>'); } else this.menu.render(); });
+  }
+  hostRoom() { this._netUI(); const code = Net.host(this.settings.name); if (code) { Net.setSettings(this.settings.game); this.menu.render(); } }
+  joinRoom(code) { if (!code || code.length < 5) { this.overlay('ONLINE', '<p style="font-family:var(--font);color:#c5c9d1">Enter the 5-letter room code.</p>'); return; } this._netUI(); Net.join(code, this.settings.name); this.menu.render(); }
+  startOnlineMatch() {
+    if (!Net.isHost) return;
+    Net.locked = true; Net.broadcast({ t: 'start', settings: this.settings.game });
+    this._beginOnline();
+  }
+  _beginOnline() {
+    const gs = this.settings.game;
+    if (this.game) { this.game.dispose(); this.game = null; }
+    this.menu.hide(); AudioEngine.menuMusic(false);
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    const me = Net.players.find(p => p.id === (Net.isHost ? 'host' : Net.id));
+    this.game = new Game(this, this.settings, { ...gs, side: me ? me.side : gs.side });
+    this.game.resize(window.innerWidth, window.innerHeight);
+    this.mode = 'game';
+    this.settings.career.matches++; this.saveSettings();
+    this.operatorSelectRound();
+  }
+  // host: once everyone has picked (or the clock runs out) build the shared roster and start the round
+  _hostMaybeStartRound(force = false) {
+    const g = this.game; const n = g && g.net; if (!n || !Net.isHost || this._roundStarting) return;
+    const pids = ['host', ...Net.players.filter(p => !p.host).map(p => p.id)];
+    if (!force && !pids.every(p => n.ready.has(p))) return;
+    this._roundStarting = true; clearTimeout(this._readyTimer);
+    const M = g.match; const upcoming = M.round + 1; const flip = Math.floor((upcoming - 1) / M.s.swapAfter) % 2 === 1;
+    const sideOf = p => flip ? (p.side === 'atk' ? 'def' : 'atk') : p.side;
+    const roster = []; const used = { atk: new Set(), def: new Set() };
+    for (const p of Net.players) { const side = sideOf(p); let r = n.ready.get(p.id); const pool = Operators.filter(o => o.side === side && !used[side].has(o.id)); if (!r || !pool.some(o => o.id === r.op)) { const o = pool[0]; r = { op: o.id, lo: this.menu.loadoutFor(o.id), def: false }; } used[side].add(r.op); roster.push({ pid: p.id, name: p.name, side, op: r.op, lo: r.lo, def: !!r.def, human: true }); }
+    for (const side of ['atk', 'def']) { for (const o of Operators.filter(o => o.side === side && !used[side].has(o.id))) { if (roster.filter(e => e.side === side).length >= 5) break; used[side].add(o.id); roster.push({ pid: null, name: o.name, side, op: o.id, lo: this.menu.loadoutFor(o.id), def: false, human: false }); } }
+    const sites = ['tellers', 'customs', 'armory']; const site = this.settings.game.site !== 'random' ? this.settings.game.site : sites[Math.floor(Math.random() * 3)];
+    const spawn = Math.floor(Math.random() * 3);
+    const atkH = roster.filter(e => e.side === 'atk'); const wants = atkH.filter(e => e.human && e.def); const holder = wants.length ? wants[Math.floor(Math.random() * wants.length)] : atkH[Math.floor(Math.random() * atkH.length)];
+    const d = { t: 'round', roster, site, spawn, defuserNid: roster.indexOf(holder) };
+    Net.broadcast(d); n.ready.clear();
+    this._startNetRound(d); this._roundStarting = false;
+  }
+  _startNetRound(d) {
+    const g = this.game; this.opSelect.close(); this._closeWait();
+    g.setupTeamsNet(d.roster);
+    g.match.startRound({ site: d.site, spawn: d.spawn, defuserNid: d.defuserNid });
+    g.hud.show(true); this.mode = 'game'; Input.wantLock = true; Input.lock();
+    this.showClickToPlay();
+  }
+  _showWait(txt) { this._closeWait(); const o = document.createElement('div'); o.className = 'overlay wait'; o.style.background = 'rgba(0,0,0,.35)'; o.innerHTML = `<div class="box" style="text-align:center"><h2 style="margin:0">${txt}</h2><div class="label" style="margin-top:8px">ROOM ${Net.code}</div></div>`; this.uiRoot.appendChild(o); this._waitEl = o; }
+  _closeWait() { if (this._waitEl) { this._waitEl.remove(); this._waitEl = null; } }
+
   // ---------- match lifecycle ----------
   startMatch() {
     const gs = this.settings.game;
@@ -87,6 +145,16 @@ class App {
     g.hud.show(false); Input.unlock(); Input.wantLock = false;
     this.mode = 'opselect';
     const prev = g.playerOp && g.playerOp.side === side ? g.playerOp.id : null;
+    if (g.net) {
+      // online: everyone picks, the host assembles the roster
+      const taken = [];
+      this.opSelect.open(side, taken, prev, (opId, loadout, extra) => {
+        if (Net.isHost) { g.net.ready.set('host', { op: opId, lo: loadout, def: !!(extra && extra.defuser) }); this._showWait('WAITING FOR PLAYERS'); this._hostMaybeStartRound(); }
+        else { g.net.sendReady(opId, loadout, !!(extra && extra.defuser)); this._showWait('WAITING FOR THE HOST'); }
+      }, 25);
+      if (Net.isHost) { g.net.onReady = () => this._hostMaybeStartRound(); clearTimeout(this._readyTimer); this._readyTimer = setTimeout(() => { if (this.game === g && g.match.phase !== 'prep') { this.opSelect.finish(); this._hostMaybeStartRound(true); } }, 27000); }
+      return;
+    }
     this.opSelect.open(side, [], prev, (opId, loadout, extra) => {
       g.setupTeams(opId, loadout);
       g.playerWantsDefuser = !!(extra && extra.defuser);
@@ -117,6 +185,7 @@ class App {
     // every match-time popup goes: pause/settings/result overlays, round banners, click-to-play, toasts
     this.closeOverlay(); this.paused = false; this.opSelect && this.opSelect.close();
     for (const e of this.uiRoot.querySelectorAll('.overlay, .roundend, .toast')) e.remove();
+    this._closeWait(); clearTimeout(this._readyTimer); if (Net.online) Net.leave();
     Input.unlock(); Input.wantLock = false; this.mode = 'menu'; this.menu.showPage('home'); AudioEngine.menuMusic(true);
   }
 
