@@ -250,6 +250,9 @@ input[type=text]:focus{border-color:var(--line-h)}
 .hud-lowhp{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 50%,rgba(150,0,0,.55));opacity:0;transition:opacity .3s}
 .hud-stun{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
 .hud-emp{position:absolute;inset:0;pointer-events:none;opacity:0;background:repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 2px,transparent 2px 4px)}
+.hud-spec{position:absolute;left:50%;bottom:90px;transform:translateX(-50%);text-align:center;font-size:26px;letter-spacing:.2em;font-weight:600;color:#fff;text-shadow:0 2px 8px #000;pointer-events:none}
+.hud-spec small{display:block;font-size:11px;letter-spacing:.35em;color:#c5c9d1;font-weight:500}
+.hud-spec span{display:block;font-size:11px;letter-spacing:.25em;color:#9fd8ff;font-weight:500;margin-top:6px}
 .hud-drone{position:absolute;inset:0;pointer-events:none;opacity:0}
 .hud-drone.on{opacity:1}
 .hud-drone .frame{position:absolute;inset:0;border:2px solid rgba(255,255,255,.15);box-shadow:inset 0 0 160px rgba(0,0,0,.6)}

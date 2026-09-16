@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Operators } from '../data/operators.js';
 import { wallTouchesRoom } from './Bot.js';
 import { Collider } from '../core/Physics.js';
+import { Assets } from '../core/Assets.js';
 
 // Round/match state machine: operator select → preparation → action → planted → round end.
 // Also owns the defuser, reinforcement budget and the team-level AI plans for the round.
@@ -99,16 +100,25 @@ export class Match {
   inZone(p, z) { return p.x >= z.min.x && p.x <= z.max.x && p.z >= z.min.z && p.z <= z.max.z && p.y >= z.min.y && p.y <= z.max.y; }
   canPlant(ch) { if (this.phase !== 'action' || !ch.hasDefuser || ch.dbno) return null; for (const b of this.site.bombs) if (this.inZone(ch.pos, b.zone)) return b; return null; }
   plantProgress(ch, dt) {
-    const b = this.canPlant(ch); if (!b) { ch.planting = 0; return false; }
-    if (!ch.planting) { ch.plantSound = this.game.audio.tool('plant', ch.pos, this.s.plantTime); this.game.noise && this.game.noise(ch, 40); }
+    const b = this.canPlant(ch); if (!b) { this.cancelPlant(ch); return false; }
+    if (!ch.planting) { ch.plantSound = this.game.audio.tool('plant', ch.pos, this.s.plantTime); this.game.noise && this.game.noise(ch, 40); this.placeDevice(ch); }
     ch.planting += dt;
     if (ch.planting >= this.s.plantTime) { this._plant(ch, b); ch.planting = 0; return true; }
     return false;
   }
-  cancelPlant(ch) { ch.planting = 0; }
+  cancelPlant(ch) { ch.planting = 0; if (ch.plantDevice) { this.game.scene.remove(ch.plantDevice); ch.plantDevice = null; } }
+  // the defuser case set down on the floor in front of the planter while they arm it
+  placeDevice(ch) {
+    if (ch.plantDevice) return ch.plantDevice;
+    const fwd = ch.forwardFlat(new THREE.Vector3()); const p = ch.pos.clone().addScaledVector(fwd, 0.62);
+    const gy = this.game.world.groundAt(p.x, p.y + 0.8, p.z, 2); if (gy !== null) p.y = gy;
+    const m = this._defuserMesh(p, ch.yaw + Math.PI / 2); this.game.scene.add(m); ch.plantDevice = m; return m;
+  }
   _plant(ch, b) {
     const g = this.game; b.planted = true; ch.hasDefuser = false; this.planted = true; this.phase = 'planted'; this.timeLeft = this.s.bombTime;
-    const pos = ch.pos.clone(); this.defuser = { pos, planter: ch, mesh: this._defuserMesh(pos), progress: 0 };
+    const pos = ch.plantDevice ? ch.plantDevice.position.clone() : ch.pos.clone(); const yaw = ch.plantDevice ? ch.plantDevice.rotation.y : ch.yaw;
+    if (ch.plantDevice) { g.scene.remove(ch.plantDevice); ch.plantDevice = null; }
+    this.defuser = { pos, planter: ch, mesh: this._defuserMesh(pos, yaw), progress: 0 };
     g.scene.add(this.defuser.mesh);
     g.hud.phase('DEFUSER PLANTED', 'BOMB ' + b.label + ' — ' + b.room.name.toUpperCase());
     g.hud.big(this.playerSide === 'atk' ? 'DEFUSER PLANTED' : 'DEFUSER PLANTED', this.playerSide === 'atk' ? 'DEFEND THE DEFUSER' : 'DISABLE THE DEFUSER', 3);
@@ -141,15 +151,18 @@ export class Match {
     const hw = 0.62, hd = 0.4; gr.userData.col = g.world.add(new Collider(new THREE.Vector3(b.pos.x - hw, b.pos.y, b.pos.z - hd), new THREE.Vector3(b.pos.x + hw, b.pos.y + 0.98, b.pos.z + hd), { material: 'metal', tag: 'prop', floor: b.room.floor }));
     return gr;
   }
-  _defuserMesh(pos) {
+  // The defuser case (Meshy "Defuser Countdown" model, ~1.9 m in the file → 53 cm case, handle up).
+  _defuserMesh(pos, yaw = 0) {
     const gr = new THREE.Group();
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.4), new THREE.MeshStandardMaterial({ color: 0x1c1f24, roughness: 0.45, metalness: 0.6 })); box.position.y = 0.1; gr.add(box);
-    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.02, 0.12), new THREE.MeshStandardMaterial({ color: 0x102030, emissive: 0x30c0ff, emissiveIntensity: 1.6 })); screen.position.set(-0.08, 0.21, 0); gr.add(screen);
-    const led = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 8), new THREE.MeshStandardMaterial({ emissive: 0xff2020, emissiveIntensity: 4 })); led.position.set(0.15, 0.22, 0.1); gr.add(led); gr.userData.led = led;
-    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.35), new THREE.MeshStandardMaterial({ color: 0x111 })); ant.position.set(0.2, 0.35, -0.12); gr.add(ant);
-    gr.position.copy(pos); box.castShadow = true;
+    const model = Assets.cloneStatic('prop_defuser');
+    if (model) { model.scale.setScalar(0.28); model.position.y = 0.094; model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } }); gr.add(model); }
+    else { const box = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.4), new THREE.MeshStandardMaterial({ color: 0x1c1f24, roughness: 0.45, metalness: 0.6 })); box.position.y = 0.1; gr.add(box); }
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8), new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xff2020, emissiveIntensity: 4 })); led.position.set(0.12, 0.2, 0.08); gr.add(led); gr.userData.led = led;
+    gr.position.copy(pos); gr.rotation.y = yaw; gr.userData.keypad = new THREE.Vector3(0.05, 0.19, 0.02);   // local point the hands work on
     return gr;
   }
+  // world-space point on the device the operator's hand works on
+  defuserHandPoint(mesh, out) { return mesh.localToWorld(out.copy(mesh.userData.keypad)); }
   canDefuse(ch) { return this.phase === 'planted' && ch.side === 'def' && !ch.dbno && this.defuser && ch.pos.distanceTo(this.defuser.pos) < 1.6; }
   defuseProgress(ch, dt) {
     if (!this.canDefuse(ch)) { ch.defusing = 0; return false; }
@@ -211,7 +224,7 @@ export class DefensePlan {
     this.wallIdx = 0; this.slotIdx = 0; this.holdIdx = 0;
     // hold spots: room corners
     this.holds = [];
-    for (const r of rooms) { const y = r.min.y; const ins = 1.1; const cs = [[r.min.x + ins, r.min.z + ins], [r.max.x - ins, r.min.z + ins], [r.min.x + ins, r.max.z - ins], [r.max.x - ins, r.max.z - ins]]; for (const [x, z] of cs) { const p = new THREE.Vector3(x, y, z); const n = game.nav.nearest(p, 1.5); if (n) { const [nx, nz] = game.nav.center(n.ix, n.iz); this.holds.push({ pos: new THREE.Vector3(nx, n.y, nz), yaw: Math.atan2(-(r.center.x - nx), -(r.center.z - nz)), room: r }); } } }
+    for (const r of rooms) { const y = r.min.y; const ins = 1.1; const cs = [[r.min.x + ins, r.min.z + ins], [r.max.x - ins, r.min.z + ins], [r.min.x + ins, r.max.z - ins], [r.max.x - ins, r.max.z - ins]]; for (const [x, z] of cs) { const p = new THREE.Vector3(x, y, z); const n = game.nav.nearest(p, 1.5); if (n) { const [nx, nz] = game.nav.center(n.ix, n.iz); const doors = this.slots.filter(s => s.kind === 'door' && s.x >= r.min.x - 0.3 && s.x <= r.max.x + 0.3 && s.z >= r.min.z - 0.3 && s.z <= r.max.z + 0.3 && !s._keepOpen); const tgt = doors.length ? doors.slice().sort((a, b) => Math.hypot(a.x - nx, a.z - nz) - Math.hypot(b.x - nx, b.z - nz))[Math.min(doors.length - 1, 1)] : null; const yaw = tgt ? Math.atan2(-(tgt.x - nx), -(tgt.z - nz)) : Math.atan2(-(r.center.x - nx), -(r.center.z - nz)); this.holds.push({ pos: new THREE.Vector3(nx, n.y, nz), yaw, room: r }); } } }
     // roam spots: adjacent rooms centers
     this.roams = L.rooms.filter(r => !rooms.includes(r) && r.floor === rooms[0].floor && r.center.distanceTo(site.center) < 18).map(r => ({ pos: game.nav.randomWalkableNear(r.center, 2) || r.center.clone(), yaw: Math.atan2(-(site.center.x - r.center.x), -(site.center.z - r.center.z)), room: r }));
   }
@@ -264,7 +277,9 @@ export class AttackPlan {
     // point outside the opening
     const out = new THREE.Vector3(s.x, s.y, s.z);
     const inward = new THREE.Vector3(16 - s.x, 0, 11 - s.z); inward.y = 0; inward.normalize();
-    const outside = out.clone().addScaledVector(inward, -2.2); const insidePt = out.clone().addScaledVector(inward, 1.5);
+    // stage beside the opening, against the wall, out of the line of fire through it
+    const along = s.horizontal ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1); const sideSign = Math.random() < 0.5 ? -1 : 1;
+    const outside = out.clone().addScaledVector(inward, -1.3).addScaledVector(along, sideSign * (s.w / 2 + 1.6)); const insidePt = out.clone().addScaledVector(inward, 1.5);
     const bombIdx = Math.floor(Math.random() * 2);
     const bomb = this.site.bombs[bombIdx];
     const route = [outside, insidePt, bomb.pos.clone()];

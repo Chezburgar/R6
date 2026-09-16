@@ -60,10 +60,11 @@ export class Weapon {
     this.kick.h = (Math.random() - 0.5) * 2 * d.recoil.h * ramp * adsMult + (this.burst > 6 ? Math.sin(this.burst * 0.9) * d.recoil.h * 0.6 : 0);
     this.burst += 1; this.burstDecay = 0;
     // spread
-    let spread = opts.ads ? (d.adsSpread !== undefined ? d.adsSpread : 0.05) : d.spread;
-    if (opts.moving) spread *= opts.ads ? 1.6 : 1.3;
+    // hip fire in Siege is tight at room range: the data spread is the cone for shotgun pellets, bullets use ~40% of it
+    let spread = opts.ads ? (d.adsSpread !== undefined ? d.adsSpread : 0.05) : d.spread * 0.4;
+    if (opts.moving) spread *= opts.ads ? 1.5 : 1.25;
     if (opts.stance === 1) spread *= 0.85; if (opts.stance === 2) spread *= 0.7;
-    spread += Math.min(this.burst, 10) * (opts.ads ? 0.03 : 0.08);
+    spread += Math.min(this.burst, 10) * (opts.ads ? 0.025 : 0.05);
     const pellets = d.pellets || 1;
     for (let i = 0; i < pellets; i++) {
       randomCone(dir, (pellets > 1 ? d.spread * (opts.ads ? 0.75 : 1) : spread) * Math.PI / 180, _dir);
@@ -98,6 +99,8 @@ export class Ballistics {
     for (const ch of game.characters) {
       if (ch === shooter || !ch.alive && !ch.dbno || ch.dead) continue;
       if (ch.pos.distanceToSquared(origin) > (stopDist + 3) * (stopDist + 3)) continue;
+      // the body may have been pushed after its last pose update (separation, collision): test where it is now
+      if (ch.root && ch.root.position.distanceToSquared(ch.pos) > 1e-6) { ch.root.position.copy(ch.pos); ch.root.updateMatrixWorld(true); ch._hbStale = true; }
       const r = ch.raycast(origin, dir, stopDist);
       if (r && (!tHit || r.dist < tHit.dist)) { target = ch; tHit = r; }
     }
@@ -108,7 +111,7 @@ export class Ballistics {
       if (h.dist > endDist + 1e-3) break;
       if (h.entry) {
         const c = h.collider;
-        if (c.tag === 'gadget' && c.owner && c.owner.onBullet) { c.owner.onBullet(def.dmg * mult, shooter, h); }
+        if ((c.tag === 'gadget' || c.tag === 'camera') && c.owner && c.owner.onBullet) { c.owner.onBullet(def.dmg * mult, shooter, h); }
         if (opts.fxDist === undefined || h.dist < 60) fx.impact(h.point, h.normal, c.material);
         level.bulletHit(h, fx);
         if (c.tag === 'shield' && c.owner && c.owner.onBullet) c.owner.onBullet(def.dmg, shooter, h);

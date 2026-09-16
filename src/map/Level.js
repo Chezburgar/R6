@@ -372,7 +372,7 @@ export class Level {
     this._static = new Map();      // materialKey -> geometries[]
     this.softWalls = []; this.barricadeSlots = []; this.hatches = []; this.glass = []; this.droneHoles = [];
     this.rooms = []; this.sites = []; this.spawns = { atk: [], def: [] };
-    this.lights = []; this.rappelWalls = [];
+    this.lights = []; this.rappelWalls = []; this.cameras = [];
     this.floorYs = [0, FLOOR_H];
     this.bounds = new THREE.Box3();
     this.interiorBounds = new THREE.Box3();
@@ -468,7 +468,7 @@ export class Level {
       this.box([cx + ox - pw / 2, y, cz + oz - pd / 2], [cx + ox + pw / 2, y + o.h, cz + oz + pd / 2], 'metal', { uvScale: 1, collide: false, matVariant: 'dark', matOverrides: { color: 0x444444 } });
       this.droneHoles.push(slot); return slot;
     }
-    if (o.kind !== 'garage' && o.kind !== 'arch') { slot.barricade = new Barricade(this, slot); this.barricadeSlots.push(slot); }
+    if (o.kind !== 'arch') { slot.barricade = new Barricade(this, slot); this.barricadeSlots.push(slot); }   // garages get boarded too (a wide barricade)
     // door frame trim
     if (o.kind === 'door') {
       const fw = horizontal ? 0.08 : t + 0.04, fd = horizontal ? t + 0.04 : 0.08;
@@ -566,6 +566,24 @@ export class Level {
     return { x, z, dir, len, width };
   }
 
+  // Fixed CCTV camera defenders can view. yaw uses the character convention (forward = (-sin yaw, 0, -cos yaw)).
+  securityCam(x, y, z, yaw, name, opts = {}) {
+    const gr = new THREE.Group(); gr.position.set(x, y, z); gr.rotation.y = yaw;
+    const dark = flat(0x1a1c20, 0.5, 0.6), grey = flat(0x9a9ea6, 0.5, 0.4);
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.22), grey); bracket.position.set(0, 0.06, 0.08); gr.add(bracket);
+    const mount = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.03), grey); mount.position.set(0, 0.06, 0.2); gr.add(mount);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.09, 0.26), grey); body.rotation.x = -0.28; gr.add(body);
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.03, 0.2), dark); hood.position.set(0, 0.06, -0.04); hood.rotation.x = -0.28; gr.add(hood);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.05, 12), dark); lens.rotation.x = Math.PI / 2 - 0.28; lens.position.set(0, -0.03, -0.15); gr.add(lens);
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.008, 6, 6), flat(0x220000, 0.5, 0, { emissive: new THREE.Color(0xff2020), emissiveIntensity: 4 })); led.position.set(0.04, 0.02, -0.14); gr.add(led);
+    gr.traverse(o => { if (o.isMesh) o.castShadow = false; });
+    this.group.add(gr);
+    // view point sits just in front of the lens so the housing never blocks the picture
+    const cam = { pos: new THREE.Vector3(x - Math.sin(yaw) * 0.24, y - 0.09, z - Math.cos(yaw) * 0.24), yaw, pitch: opts.pitch !== undefined ? opts.pitch : -0.3, name, mesh: gr, led, alive: true, floor: opts.floor || 0, room: opts.room || null };
+    cam.col = this.world.add(new Collider(new THREE.Vector3(x - 0.12, y - 0.1, z - 0.15), new THREE.Vector3(x + 0.12, y + 0.1, z + 0.22), { material: 'metal', tag: 'camera', owner: cam, floor: cam.floor, blocksNav: false, blocksVision: false }));
+    cam.onBullet = (dmg, shooter) => { if (!cam.alive) return; cam.alive = false; led.material = flat(0x111111, 0.5, 0.2); body.rotation.x = 0.6; hood.rotation.x = 0.6; this.onCameraDestroyed && this.onCameraDestroyed(cam, shooter); };
+    this.cameras.push(cam); return cam;
+  }
   light(x, y, z, color, intensity, distance, opts = {}) {
     const l = new THREE.PointLight(color, intensity * 0.8, distance, 2);
     l.position.set(x, y - 0.35, z); l.castShadow = false;

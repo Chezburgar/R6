@@ -160,6 +160,15 @@ export function buildBorder(world, scene) {
   roomLight('Kitchen', neon, 22); roomLight('East Hallway', warm, 16);
 
   // ---------------- spawns & sites ----------------
+  // security cameras: two outside covering the main approaches, the rest in hallways (Siege gives defenders a handful)
+  const camAt = (x, y, z, tx, tz, name, floor = 0, pitch = -0.32) => L.securityCam(x, y, z, Math.atan2(-(tx - x), -(tz - z)), name, { floor, pitch });
+  camAt(32.45, 2.95, 5.6, 40, 8, 'EAST GARAGE', 0, -0.25);
+  camAt(15.0, 2.95, -0.45, 16, -8, 'SOUTH ENTRANCE', 0, -0.25);
+  camAt(-0.45, 2.95, 15.8, -8, 17, 'WEST PARKING', 0, -0.25);
+  camAt(19.6, 3.0, 0.45, 13, 5, 'LOBBY');
+  camAt(10.45, 3.0, 13.6, 16, 10.5, 'MAIN HALLWAY');
+  camAt(19.6, F2 + 3.0, 8.45, 13, 12, 'UPPER HALLWAY', 1);
+  camAt(31.55, F2 + 3.0, 8.45, 25, 12, 'EAST HALLWAY', 1);
   L.spawns.atk = [
     { name: 'EAST VEHICLE ENTRANCE', pos: new THREE.Vector3(44, 0, 6), points: [[44, 0, 4], [45, 0, 7], [43, 0, 9], [46, 0, 3], [44, 0, 11]] },
     { name: 'WEST PARKING', pos: new THREE.Vector3(-11, 0, 11), points: [[-11, 0, 9], [-12, 0, 12], [-10, 0, 14], [-13, 0, 7], [-11, 0, 16]] },

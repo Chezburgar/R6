@@ -10,12 +10,13 @@ import { getMaterial } from './map/Materials.js';
 const MANIFEST = {
   wpn_ar: 'assets/models/weapons/ar.glb', wpn_smg: 'assets/models/weapons/smg.glb', wpn_shotgun: 'assets/models/weapons/shotgun.glb', wpn_pistol: 'assets/models/weapons/pistol.glb',
   op_sledge: 'assets/models/operators/sledge.glb', op_thatcher: 'assets/models/operators/thatcher.glb', op_ash: 'assets/models/operators/ash.glb', op_thermite: 'assets/models/operators/thermite.glb', op_lion: 'assets/models/operators/lion.glb',
+  prop_drone: 'assets/models/props/drone.glb', prop_defuser: 'assets/models/props/defuser.glb',
   op_rook: 'assets/models/operators/rook.glb', op_frost: 'assets/models/operators/frost.glb', op_kapkan: 'assets/models/operators/kapkan.glb', op_bandit: 'assets/models/operators/bandit.glb',
 };
 const TIPS = ['Headshots are lethal regardless of health.', 'Reinforce walls during the preparation phase — you have 10 per team.', 'Soft walls can be shot through. Bullets lose damage with every surface they penetrate.', 'Hold F on a soft wall as a defender to reinforce it. Thermite burns through reinforcements.', 'Downed operators can be revived by teammates — finish them or cover the body.', 'Attackers can rappel exterior walls: press F facing a wall from outside.', 'Bandit\'s shock wire destroys Thermite charges on contact. Thatcher\'s EMP disables it.', 'Lean with Q and E to peek corners without exposing your body.', 'Press B to switch fire mode. Semi-auto is easier to control at range.', 'The defuser must be planted inside a bomb site. Defenders have 45 seconds to disable it.'];
 
 const DEFAULTS = {
-  name: 'Operator', renown: 148560, credits: 1200, sens: 6, adsSens: 75, fov: 74, shadows: 'high', bloom: true, master: 0.8, sfx: 1, ui: 0.7, ambience: 0.6, music: 0.6, invertY: false, skin: 'default', quality: 'high',
+  name: 'Operator', renown: 148560, credits: 1200, sens: 6, adsSens: 75, fov: 74, shadows: 'high', bloom: true, master: 0.8, sfx: 1, ui: 0.7, ambience: 0.6, music: 0.6, invertY: false, skin: 'default', quality: 'high', showFps: false,
   game: { preset: 'casual', side: 'atk', site: 'random', difficulty: 'normal' }, loadouts: {}, career: { matches: 0, wins: 0, kills: 0, deaths: 0, headshots: 0 },
 };
 
@@ -24,7 +25,7 @@ class App {
     this.canvas = document.getElementById('gl'); this.uiRoot = document.getElementById('ui');
     this.settings = this.loadSettings();
     const r = this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
-    r.setPixelRatio(Math.min(window.devicePixelRatio, this.settings.quality === 'ultra' ? 2 : 1.5));
+    r.setPixelRatio(this.pixelRatioFor(this.settings.quality));
     r.setSize(window.innerWidth, window.innerHeight, false);
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 0.92; r.outputColorSpace = THREE.SRGBColorSpace;
@@ -35,6 +36,8 @@ class App {
     // Chrome swallows the Escape keydown that exits pointer lock, other browsers deliver both: only act once
     window.addEventListener('keydown', e => { if (e.code === 'Escape' && performance.now() - Input.lastLockChange > 150) this.onEscape(); });
   }
+  // render scale per preset: performance renders at 85% of CSS pixels, medium 1:1, high/ultra supersample on HiDPI screens
+  pixelRatioFor(q) { return q === 'performance' ? Math.min(window.devicePixelRatio, 1) * 0.85 : q === 'ultra' ? Math.min(window.devicePixelRatio, 2) : q === 'high' ? Math.min(window.devicePixelRatio, 1.5) : Math.min(window.devicePixelRatio, 1); }
   loadSettings() { try { const s = JSON.parse(localStorage.getItem('r6.settings') || '{}'); return { ...DEFAULTS, ...s, game: { ...DEFAULTS.game, ...(s.game || {}) }, career: { ...DEFAULTS.career, ...(s.career || {}) } }; } catch (e) { return { ...DEFAULTS }; } }
   saveSettings() { try { localStorage.setItem('r6.settings', JSON.stringify(this.settings)); } catch (e) {} this.applyAudioSettings(); }
   applyAudioSettings() { const s = this.settings; AudioEngine.setVolume('master', s.master); AudioEngine.setVolume('sfx', s.sfx); AudioEngine.setVolume('ui', s.ui); AudioEngine.setVolume('ambience', s.ambience); AudioEngine.setVolume('music', s.music === undefined ? 0.6 : s.music); }
@@ -143,7 +146,8 @@ class App {
       <div><div class="label">FIELD OF VIEW <span id="v-fov">${s.fov}</span></div><input type="range" id="s-fov" min="60" max="95" step="1" value="${s.fov}"></div>
       <div><div class="label">SHADOWS</div><div class="seg" id="s-shadows">${['off', 'medium', 'high', 'ultra'].map(v => `<button data-v="${v}" class="${s.shadows === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>
       <div><div class="label">BLOOM</div><div class="seg" id="s-bloom"><button data-v="1" class="${s.bloom ? 'on' : ''}">ON</button><button data-v="0" class="${!s.bloom ? 'on' : ''}">OFF</button></div></div>
-      <div><div class="label">RENDER SCALE</div><div class="seg" id="s-quality">${['medium', 'high', 'ultra'].map(v => `<button data-v="${v}" class="${s.quality === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>
+      <div><div class="label">QUALITY <span style="color:#8a8f99">(performance: 85% scale, 1k shadows, no bloom/AA)</span></div><div class="seg" id="s-quality">${['performance', 'medium', 'high', 'ultra'].map(v => `<button data-v="${v}" class="${s.quality === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>
+      <div><div class="label">FPS COUNTER</div><div class="seg" id="s-fps"><button data-v="0" class="${!s.showFps ? 'on' : ''}">OFF</button><button data-v="1" class="${s.showFps ? 'on' : ''}">ON</button></div></div>
       <div><div class="label">INVERT Y</div><div class="seg" id="s-invert"><button data-v="0" class="${!s.invertY ? 'on' : ''}">OFF</button><button data-v="1" class="${s.invertY ? 'on' : ''}">ON</button></div></div>
       <div><div class="label">MASTER VOLUME</div><input type="range" id="s-master" min="0" max="1" step="0.05" value="${s.master}"></div>
       <div><div class="label">EFFECTS VOLUME</div><input type="range" id="s-sfx" min="0" max="1" step="0.05" value="${s.sfx}"></div>
@@ -157,12 +161,13 @@ class App {
     q('s-sens').addEventListener('input', e => { s.sens = +e.target.value; q('v-sens').textContent = s.sens; this.saveSettings(); this.applySettings(); });
     q('s-ads').addEventListener('input', e => { s.adsSens = +e.target.value; q('v-ads').textContent = s.adsSens; this.saveSettings(); this.applySettings(); });
     q('s-fov').addEventListener('input', e => { s.fov = +e.target.value; q('v-fov').textContent = s.fov; this.saveSettings(); this.applySettings(); });
-    for (const [id, key, conv] of [['s-shadows', 'shadows', v => v], ['s-bloom', 'bloom', v => v === '1'], ['s-quality', 'quality', v => v], ['s-invert', 'invertY', v => v === '1']]) q(id).querySelectorAll('button').forEach(b => b.addEventListener('click', () => { s[key] = conv(b.dataset.v); q(id).querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); this.saveSettings(); this.applySettings(); }));
+    for (const [id, key, conv] of [['s-shadows', 'shadows', v => v], ['s-bloom', 'bloom', v => v === '1'], ['s-quality', 'quality', v => v], ['s-invert', 'invertY', v => v === '1'], ['s-fps', 'showFps', v => v === '1']]) q(id).querySelectorAll('button').forEach(b => b.addEventListener('click', () => { s[key] = conv(b.dataset.v); q(id).querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); this.saveSettings(); this.applySettings(); }));
     for (const [id, key] of [['s-master', 'master'], ['s-sfx', 'sfx'], ['s-ui', 'ui'], ['s-amb', 'ambience'], ['s-music', 'music']]) q(id).addEventListener('input', e => { s[key] = +e.target.value; this.saveSettings(); });
   }
   applySettings() {
-    const s = this.settings; this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, s.quality === 'ultra' ? 2 : s.quality === 'high' ? 1.5 : 1)); this.resize();
-    if (this.game) { const g = this.game; g.player.sens = 0.00037 * s.sens; g.player.adsSensMult = s.adsSens / 100; g.player.invertY = s.invertY; g.bloom.enabled = !!s.bloom; g.sun.castShadow = s.shadows !== 'off'; g.settings = s; }
+    const s = this.settings; this.renderer.setPixelRatio(this.pixelRatioFor(s.quality)); this.resize();
+    if (this.game) { const g = this.game; g.player.sens = 0.00037 * s.sens; g.player.adsSensMult = s.adsSens / 100; g.player.invertY = s.invertY; g.settings = s; g.applyQuality(); }
+    this.fpsEl && (this.fpsEl.style.display = s.showFps ? 'block' : 'none');
     if (this.menu && this.mode === 'menu') this.menu.render();
   }
   openControls(onClose) {
@@ -174,6 +179,8 @@ class App {
   loop() {
     requestAnimationFrame(() => this.loop());
     const dt = Math.min(0.05, this.clock.getDelta());
+    this._fpsN = (this._fpsN || 0) + 1; this._fpsT = (this._fpsT || 0) + dt; this._fpsMax = Math.max(this._fpsMax || 0, dt);
+    if (this._fpsT >= 0.5) { if (!this.fpsEl) { this.fpsEl = document.createElement('div'); this.fpsEl.id = 'fps'; this.fpsEl.style.cssText = 'position:fixed;left:8px;bottom:6px;font:12px monospace;color:#9fd8ff;text-shadow:0 1px 2px #000;pointer-events:none;z-index:50;display:none'; document.body.appendChild(this.fpsEl); this.fpsEl.style.display = this.settings.showFps ? 'block' : 'none'; } this.fpsEl.textContent = `${Math.round(this._fpsN / this._fpsT)} fps · worst ${(this._fpsMax * 1000).toFixed(0)} ms`; this._fpsN = 0; this._fpsT = 0; this._fpsMax = 0; }
     const w = window.innerWidth, h = window.innerHeight;
     if (this.mode === 'menu' || this.mode === 'opselect') {
       this.menuScene.update(dt, w, h);

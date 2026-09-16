@@ -49,6 +49,7 @@ class AssetsClass {
           if (m.normalMap) m.normalMap.anisotropy = 8;
           // Meshy bakes fairly hot metallic values; tame them so cloth doesn't look like chrome.
           if (key.startsWith('op_')) { m.metalness = 0.35; m.roughness = 1.0; m.envMapIntensity = 0.6; }
+          else if (key.startsWith('prop_')) { m.metalness = 0.9; m.roughness = 1.0; m.envMapIntensity = 0.8; }
           else { m.metalness = 1.0; m.roughness = 1.0; m.envMapIntensity = 0.9; }
           m.side = THREE.FrontSide;
         }

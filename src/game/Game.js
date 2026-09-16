@@ -19,6 +19,7 @@ import { Match, Presets } from './Match.js';
 import { HUD } from '../ui/HUD.js';
 import { Operators, OperatorById, Gadgets as GadgetDefs, SecondaryGadgets } from '../data/operators.js';
 import { Skins } from '../ui/Menu.js';
+import { getMaterial } from '../map/Materials.js';
 import { BARRICADE_BUILD_TIME } from '../map/Level.js';
 
 // Match orchestrator: scene/lighting/post-processing, level lifecycle per round, players
@@ -57,6 +58,7 @@ export class Game {
     this.difficulty = gameSettings.difficulty || 'normal';
     this.hud = new HUD(this, app.uiRoot);
     this._post();
+    this.applyQuality();
     this.playerOp = null; this.playerLoadout = null;
     this.stats = { kills: 0, deaths: 0, headshots: 0 };
     this.pings = [];   // contextual pings: { kind: 'yellow' | 'enemy', pos, t, label, by }
@@ -101,6 +103,36 @@ export class Game {
     this.smaa = new SMAAPass(size.x * r.getPixelRatio(), size.y * r.getPixelRatio()); this.composer.addPass(this.smaa);
     this.composer.addPass(new OutputPass());
   }
+  get perf() { return this.settings.quality === 'performance'; }
+  // Quality presets: performance trades bloom, SMAA, shadow resolution/rate and light count for frame time.
+  applyQuality() {
+    const s = this.settings; const perf = this.perf;
+    this.bloom.enabled = !!s.bloom && !perf; this.smaa.enabled = !perf;
+    this.sun.castShadow = s.shadows !== 'off';
+    const sz = perf ? 1024 : s.shadows === 'ultra' ? 4096 : s.shadows === 'high' ? 2048 : 1536;
+    if (this.sun.shadow.mapSize.x !== sz) { this.sun.shadow.mapSize.set(sz, sz); if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; } }
+    this.renderer.shadowMap.autoUpdate = false; this.renderer.shadowMap.needsUpdate = true; this._shadowEvery = perf ? 2 : 1;
+    this.lightBudget = perf ? 5 : s.quality === 'ultra' ? 10 : 8;
+    this.scene.fog.far = perf ? 150 : 220;
+    if (this.player && this.player.setScopeRes) this.player.setScopeRes(perf ? 640 : 1024);
+  }
+  // Compile every shader the round can need before the first frame so nothing stalls mid-fight.
+  warmup() {
+    const P = this.player; const restore = [];
+    if (P) { for (const [, g] of P.vmWeapons) { restore.push([g, g.visible]); g.visible = true; const lens = g.userData.lens; if (lens) { restore.push([lens, lens.visible]); lens.visible = true; } } if (P.arms) { restore.push([P.arms, P.arms.visible]); P.arms.visible = true; } }
+    // one of every effect, far below the map
+    const far = new THREE.Vector3(16, -80, 11); const n = new THREE.Vector3(0, 1, 0);
+    try { this.effects.muzzleFlash(far, n, 1, false); this.effects.impact(far, n, 'concrete'); this.effects.impact(far, n, 'drywall'); this.effects.bloodHit(far, n); this.effects.wallDebris(far, n, 'wood'); this.effects.smokeCloud && this.effects.smokeCloud(far, 1, 0.3); this.effects.tracer(far, n, 1, false); this.level.addBulletHole(far, n); this.level.addScorch(far, n); this.level.addBlood(far, n); } catch (e) {}
+    // materials that only appear later: barricade boards, bomb device, defuser
+    const tmp = new THREE.Group(); tmp.position.copy(far);
+    for (const c of [0xffffff, 0xf0e2cc, 0xd9c6ab, 0xe8dcc6, 0xcdb99a]) tmp.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), getMaterial('barricade', { color: c })));
+    tmp.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), getMaterial('metal', { color: 0x777777 })));
+    this.scene.add(tmp);
+    this.renderer.compile(this.scene, this.camera);
+    if (P) this.renderer.compile(this.scene, this.vmCamera);
+    this.scene.remove(tmp);
+    for (const [o, v] of restore) o.visible = v;
+  }
   resize(w, h) {
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.vmCamera.aspect = w / h; this.vmCamera.updateProjectionMatrix();
     if (this.composer) { this.composer.setPixelRatio(this.renderer.getPixelRatio()); this.composer.setSize(w, h); this.smaa.setSize(w * this.renderer.getPixelRatio(), h * this.renderer.getPixelRatio()); }
@@ -109,11 +141,13 @@ export class Game {
   // ---------- level lifecycle ----------
   resetLevel() {
     if (this.level) { this.scene.remove(this.level.group); this.scene.remove(this.level.dynamicGroup); this.scene.remove(this.level.decalInst); this.scene.remove(this.level.scorchInst); this.scene.remove(this.level.bloodInst); for (const l of this.level.lights) this.scene.remove(l); this.level.group.traverse(o => { if (o.isMesh) o.geometry.dispose(); }); this.level.dynamicGroup.traverse(o => { if (o.isMesh) o.geometry.dispose(); }); }
+    if (this.player && this.player.usingCam) this.player.exitCam();
     this.world = new World(2);
     this.level = buildBorder(this.world, this.scene);
     this.level.onCellDestroyed = (wall, cell) => { this.effects.wallDebris(cell.center, wall.normal, 'drywall'); };
     this.level.onWallChanged = (wall) => { };
     this.level.onBarricadeKnock = (b, pos, fp) => { this.audio.knock(pos, !!fp); };
+    this.level.onCameraDestroyed = (cam, shooter) => { this.effects.shockSparks && this.effects.shockSparks(cam.pos); this.audio.impact(cam.pos, 'metal'); this.audio.glass && this.audio.glass(cam.pos); if (this.player && this.player.side === 'def') this.hud.toast('CAMERA LOST — ' + cam.name, 2); if (shooter && shooter.isPlayer) this.hud.hitmarker(false, false); };
     this.level.onBarricadeChunk = (pos, normal) => { this.effects.wallDebris(pos, normal || new THREE.Vector3(0, 0, 1), 'wood'); };
     this.nav = new NavGrid(this.world, new THREE.Box3(new THREE.Vector3(-16, 0, -14), new THREE.Vector3(48, 8, 42)), this.level.floorYs);
     if (this.effects) this.effects.level = this.level;
@@ -166,6 +200,7 @@ export class Game {
       if (c.bot) { c.bot.planBuilt = false; c.bot.plan = []; c.bot.atkPlan = null; c.bot.holdSpot = null; c.bot.coverSpot = null; c.bot.guardSpot = null; }
     }
     this.hud.refreshGadgets();
+    this.applyQuality(); this.warmup();
     // attacker player: the preparation phase is played from the drone (two drones per round, like Siege)
     this.player.dronesLeft = 2; this.pings.length = 0;
     if (this.player.side === 'atk') this.enterDrone(atkSpawn.pos);
@@ -208,6 +243,12 @@ export class Game {
   }
   _droneControls() {
     const P = this.player; const M = this.match; const C = P.char;
+    if (P.side === 'def') {
+      if (C.dead || C.dbno) { if (P.usingCam) P.exitCam(); return; }
+      if (P.usingCam) { if (Input.hit('droneExit')) { P.exitCam(); this.audio.click('back'); } return; }
+      if (!P.interaction && Input.hit('drone')) P.enterCam(P._lastCam || 0);
+      return;
+    }
     if (P.side !== 'atk' || C.dead || C.dbno) { if (P.usingDrone) this.exitDrone(); return; }
     if (M.phase === 'prep') { if (P.drone && !P.usingDrone) { P.usingDrone = true; this.hud.drone(true); } if (Input.hit('droneExit')) this.hud.toast('OPERATORS DEPLOY WHEN THE ACTION PHASE STARTS', 1.6); return; }
     if (P.usingDrone) { if (Input.hit('droneExit')) { this.exitDrone(); this.audio.click('back'); } return; }
@@ -241,8 +282,9 @@ export class Game {
     // revive
     for (const t of this.characters) { if (t.side === C.side && t.dbno && !t.dead && t !== C && t.pos.distanceTo(C.pos) < 1.7) { out.push({ label: 'REVIVE ' + t.name, dur: 5, start: () => { t.reviver = C; }, done: () => { t.revive(); t.reviver = null; C.score += 50; }, cancel: () => { t.reviver = null; } }); break; } }
     // defuser
-    const b = M.canPlant(C); if (b) out.push({ label: 'PLANT DEFUSER', dur: M.s.plantTime, start: () => { C.planting = 0.001; C.plantSound = this.audio.tool('plant', C.pos, M.s.plantTime); this.noise(C, 40); }, done: () => { M._plant(C, b); }, cancel: () => { C.planting = 0; } });
-    if (M.canDefuse(C)) out.push({ label: 'DISABLE DEFUSER', dur: M.s.defuseTime, start: () => { this.audio.tool('defuse', M.defuser.pos, M.s.defuseTime); }, done: () => { C.score += 100; M.endRound(M.defTeam, 'DEFUSER DISABLED'); } });
+    const typing = (mesh) => (out) => { M.defuserHandPoint(mesh, out); out.y += 0.04 + Math.abs(Math.sin(this.time * 9)) * 0.05; out.x += Math.sin(this.time * 3.1) * 0.03; out.z += Math.cos(this.time * 2.3) * 0.03; return out; };
+    const b = M.canPlant(C); if (b) out.push({ label: 'PLANT DEFUSER', dur: M.s.plantTime, crouch: true, start: () => { C.planting = 0.001; C.plantSound = this.audio.tool('plant', C.pos, M.s.plantTime); this.noise(C, 40); M.placeDevice(C); }, hand: (o) => C.plantDevice ? typing(C.plantDevice)(o) : o.copy(C.pos), done: () => { M._plant(C, b); }, cancel: () => { M.cancelPlant(C); if (C.plantSound) C.plantSound(); } });
+    if (M.canDefuse(C)) out.push({ label: 'DISABLE DEFUSER', dur: M.s.defuseTime, crouch: true, start: () => { this._defuseStop = this.audio.tool('defuse', M.defuser.pos, M.s.defuseTime); }, hand: (o) => typing(M.defuser.mesh)(o), done: () => { C.score += 100; M.endRound(M.defTeam, 'DEFUSER DISABLED'); }, cancel: () => { this._defuseStop && this._defuseStop(); } });
     if (M.defuserDropped && C.side === 'atk' && M.defuserDropped.pos.distanceTo(C.pos) < 1.6) out.push({ label: 'PICK UP DEFUSER', dur: 0, done: () => { M.pickupDefuser(C); this.hud.refreshGadgets(); } });
     // armor pack
     for (const e of this.gadgets.entities) { if (e.type === 'rook' && !e.dead && e.side === C.side && !C.armorPlate && e.pos.distanceTo(C.pos) < 1.6) { out.push({ label: 'TAKE ARMOR PLATE', dur: 0.8, done: () => { e.take(C); this.hud.toast('ARMOR PLATE EQUIPPED'); } }); break; } }
@@ -335,7 +377,7 @@ export class Game {
   // Only the nearest N point lights are active; the count stays constant so three.js keeps one shader program.
   _cullLights(dt) {
     this._lightT = (this._lightT || 0) - dt; if (this._lightT > 0) return; this._lightT = 0.2;
-    const N = this.settings.quality === 'ultra' ? 10 : 8; const cam = this.camera.position; const L = this.level.lights;
+    const N = this.lightBudget || 8; const cam = this.camera.position; const L = this.level.lights;
     for (const l of L) l._d = l.position.distanceToSquared(cam) * (Math.abs(l.position.y - cam.y) > 3.2 ? 2.5 : 1);
     const sorted = L.slice().sort((a, b) => a._d - b._d);
     for (let i = 0; i < sorted.length; i++) sorted[i].visible = i < N;
@@ -346,6 +388,7 @@ export class Game {
     this.vmCamera.position.copy(this.camera.position); this.vmCamera.quaternion.copy(this.camera.quaternion); this.vmCamera.fov = P ? P.vmFov : 55; this.vmCamera.updateProjectionMatrix(); this.vmCamera.updateMatrixWorld(true);
     if (P) { P._vmCamera = this.vmCamera; P.renderScope(this.renderer, this.scene); }
     this.sky.position.copy(this.camera.position);
+    this._frame = (this._frame || 0) + 1; if (this._frame % (this._shadowEvery || 1) === 0) this.renderer.shadowMap.needsUpdate = true;
     this.composer.render();
   }
   dispose() {

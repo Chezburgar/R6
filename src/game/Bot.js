@@ -9,13 +9,13 @@ import { BARRICADE_BUILD_TIME } from '../map/Level.js';
 // phase setup (reinforce, barricade, gadgets), attack plans (entry, breach, plant, post-plant)
 // and defence plans (anchor / roam / retake).
 
-const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 const HW = 0.21;   // bots are slightly slimmer than the nav grid's cells so they never wedge in gaps the grid allows
 
 export const Difficulty = {
-  easy: { reaction: 0.75, accuracy: 0.42, settle: 1.2, burst: [2, 4], vision: 30, aggression: 0.4 },
-  normal: { reaction: 0.45, accuracy: 0.66, settle: 0.7, burst: [3, 6], vision: 40, aggression: 0.65 },
-  hard: { reaction: 0.25, accuracy: 0.86, settle: 0.4, burst: [4, 9], vision: 48, aggression: 0.9 },
+  easy: { reaction: 0.95, accuracy: 0.38, settle: 1.3, burst: [2, 3], vision: 26, aggression: 0.35 },
+  normal: { reaction: 0.6, accuracy: 0.56, settle: 0.9, burst: [2, 5], vision: 34, aggression: 0.55 },
+  hard: { reaction: 0.35, accuracy: 0.78, settle: 0.55, burst: [3, 7], vision: 42, aggression: 0.8 },
 };
 
 export class Bot {
@@ -35,7 +35,7 @@ export class Bot {
   }
 
   // ---------- lifecycle ----------
-  spawn(pos, yaw) { this.rallyDone = false; this.rallyT = 0; this.buildingBar = null; this.char.reset(pos, yaw); this.aimYaw = yaw; this.aimPitch = 0; this.vel.set(0, 0, 0); this.state = 'idle'; this.path = null; this.goal = null; this.target = null; this.plan = []; this.planIdx = 0; this.holdSpot = null; this.stateT = 0; this.reviveTarget = null; this.thermiteWall = null; this.char.setVisible(true); }
+  spawn(pos, yaw) { this.rallyDone = false; this.rallyT = 0; this.buildingBar = null; this.enterAt = undefined; this.pauseT = 0; this.travel = 0; this.char.reset(pos, yaw); this.aimYaw = yaw; this.aimPitch = 0; this.vel.set(0, 0, 0); this.state = 'idle'; this.path = null; this.goal = null; this.target = null; this.plan = []; this.planIdx = 0; this.holdSpot = null; this.stateT = 0; this.reviveTarget = null; this.thermiteWall = null; this.char.setVisible(true); }
   get alive() { return this.char.alive && !this.char.dead; }
 
   update(dt) {
@@ -65,11 +65,15 @@ export class Bot {
     for (const e of g.characters) {
       if (e.side === C.side || e.dead || e === C) continue;
       const d = e.pos.distanceTo(C.pos); if (d > this.D.vision) continue;
-      const head = e.headPos(_v3); const to = head.clone().sub(eye).normalize();
+      // Siege pacing: defenders don't hunt attackers out on the road, attackers don't duel windows from 20 m out
+      const meIn = g.level.isInterior(C.pos), themIn = g.level.isInterior(e.pos);
+      if (this.side === 'def' && !themIn && d > 9) continue;
+      if (this.side === 'atk' && !meIn && themIn && d > 9) continue;
+      const head = e.headPos(_v3); const to = _v4.subVectors(head, eye).normalize();
       const ang = fwd.dot(to);
       if (d > 2.5 && ang < 0.2) continue;                         // ~78° half-cone
       if (e.dbno && d > 15) continue;
-      if (!g.world.visible(eye, head) && !g.world.visible(eye, e.chestPos(new THREE.Vector3()))) continue;
+      if (!g.world.visible(eye, head) && !g.world.visible(eye, e.chestPos(_v5))) continue;
       if (g.gadgets.inSmoke(eye, head)) continue;
       // prone / crouch reduce detection at range
       if (d < bestD) { bestD = d; best = e; }
@@ -100,15 +104,15 @@ export class Bot {
       const err = (1 - this.D.accuracy) * (0.35 + settle * 1.2) + (C.stunned > 0 ? 1.5 : 0) + (this.target.speedNorm > 0.5 ? 0.12 : 0);
       const t = g.time * 3.1 + this.op.id.length;
       zone.x += Math.sin(t) * err * 0.6; zone.y += Math.cos(t * 1.3) * err * 0.35; zone.z += Math.sin(t * 0.7 + 1) * err * 0.6;
-      const d = zone.clone().sub(eye); const len = Math.hypot(d.x, d.z);
+      const d = _v3.subVectors(zone, eye); const len = Math.hypot(d.x, d.z);
       wantYaw = Math.atan2(-d.x, -d.z); wantPitch = Math.atan2(d.y, len); speed = 9 + this.D.accuracy * 8;
       this.wantAds = eye.distanceTo(zone) > 9 && this.target && !this.target.dbno;
     } else if (this.target && g.time - this.lastSeenT < 6) {
-      const d = this.lastSeen.clone().sub(C.pos); wantYaw = Math.atan2(-d.x, -d.z); wantPitch = 0; this.wantAds = false; this.onTargetT = 0;
+      const d = _v3.subVectors(this.lastSeen, C.pos); wantYaw = Math.atan2(-d.x, -d.z); wantPitch = 0; this.wantAds = false; this.onTargetT = 0;
     } else {
       this.onTargetT = 0; this.wantAds = false;
-      if (this.path && this.pathIdx < this.path.length) { const wp = this.path[this.pathIdx]; const d = wp.clone().sub(C.pos); if (d.lengthSq() > 0.05) wantYaw = Math.atan2(-d.x, -d.z); }
-      else if (this.hearPoint && this.hearT > 0) { const d = this.hearPoint.clone().sub(C.pos); wantYaw = Math.atan2(-d.x, -d.z); }
+      if (this.path && this.pathIdx < this.path.length) { const wp = this.path[this.pathIdx]; const d = _v3.subVectors(wp, C.pos); if (d.lengthSq() > 0.05) wantYaw = Math.atan2(-d.x, -d.z); }
+      else if (this.hearPoint && this.hearT > 0) { const d = _v3.subVectors(this.hearPoint, C.pos); wantYaw = Math.atan2(-d.x, -d.z); }
       else if (this.holdSpot) wantYaw = this.holdYaw;
       wantPitch = 0; speed = 4;
     }
@@ -138,7 +142,7 @@ export class Bot {
     const origin = eye.clone(); const dir = C.forward(new THREE.Vector3());
     const fired = w.tryFire(g, origin, dir, { ads: this.wantAds, moving: C.speedNorm > 0.2, stance: C.stance, viewmodel: false, tracer: true, fxOrigin: C.muzzleWorld(new THREE.Vector3()) });
     if (fired) {
-      this.recoilK = 1; this.burstLeft--; if (this.burstLeft <= 0) this.burstPause = 0.15 + Math.random() * 0.3;
+      this.recoilK = 1; this.burstLeft--; if (this.burstLeft <= 0) this.burstPause = 0.3 + Math.random() * 0.5;
       const mz = C.muzzleWorld(new THREE.Vector3()); g.effects.muzzleFlash(mz, dir, w.def.flash, false);
       g.audio.gunshot({ cal: w.def.cal }, mz, false); g.noise && g.noise(C, 60);
       if (!w.auto) this.burstPause = 0.18 + Math.random() * 0.2;
@@ -167,10 +171,19 @@ export class Bot {
       if (flatD < 0.35 && Math.abs(wp.y - C.pos.y) < 1.2) { this.pathIdx++; if (this.pathIdx >= this.path.length) { this.path = null; } }
       if (this.path) {
         wp = this.path[this.pathIdx]; wish.set(wp.x - C.pos.x, 0, wp.z - C.pos.z); const l = wish.length(); if (l > 1e-3) wish.divideScalar(l);
-        // sprint when far from danger
-        const sprint = !engaged && this.state !== 'hold' && flatD > 3 && (this.side === 'atk' ? (g.match.timeLeft < 50 || this.D.aggression > 0.8 || this.role === 'rusher') : g.match.phase === 'prep');
+        // sprint only in the open with nothing going on; inside, operators walk
+        const inside = g.level.isInterior(C.pos);
+        const sprint = !engaged && this.state !== 'hold' && flatD > 3 && this.hearT <= 0 && (this.side === 'atk' ? (!inside && (g.match.timeLeft < 50 || this.role === 'rusher' || Math.random() < 0.5)) : g.match.phase === 'prep');
         C.sprinting = sprint; if (sprint) speed *= 1.5;
         if (engaged) speed *= 0.75;
+        // bounding: inside the building attackers move in short legs and stop to look (Siege tempo)
+        if (this.side === 'atk' && inside && !engaged && g.match.phase !== 'planted' && !C.hasDefuser) {
+          this.travel = (this.travel || 0) + Math.hypot(this.vel.x, this.vel.z) * dt;
+          if (this.pauseT > 0) { this.pauseT -= dt; wish.set(0, 0, 0); speed = 0; }
+          else if (this.travel > (this.boundLen || 5)) { this.travel = 0; this.boundLen = 3.5 + Math.random() * 4; this.pauseT = 0.5 + Math.random() * 1.1; }
+          if (!inside) speed *= 0.8;
+        }
+        if (this.side === 'atk' && inside && !engaged) speed *= 0.72;
         if (C.wire > 0) speed *= 0.5;
         this.repathT -= dt; if (this.repathT <= 0 && this.goal) { const p = g.nav.findPath(C.pos, this.goal, this.side); if (p) { this.path = p; this.pathIdx = 0; } this.repathT = 2.5 + Math.random(); }
       }
@@ -338,7 +351,7 @@ export class Bot {
   _atkPrep(dt) { const C = this.char; this.stop(); C.stance = Stance.STAND; }
   _atkAction(dt) {
     const g = this.game; const C = this.char; const M = g.match; const site = M.site;
-    if (!this.atkPlan) { this.atkPlan = g.attackPlan.assign(this); }
+    if (!this.atkPlan) { this.atkPlan = g.attackPlan.assign(this); this.atkPlan.route.unshift(C.pos.clone()); }   // stage 0 = hold at spawn
     const P = this.atkPlan;
     // engaged
     if (this.target && g.time - this.lastSeenT < 1) { this.state = 'engage'; if (C.pos.distanceTo(this.target.pos) > 4 && this.D.aggression > 0.7 && !this.target.dbno) { /* push */ this.moveTo(this.lastSeen, 2.5); } else this.stop(); C.stance = Stance.STAND; return; }
@@ -367,7 +380,9 @@ export class Bot {
     if (P.stage < P.route.length) {
       const wp = P.route[P.stage];
       // rally before the final push: wait (up to 12 s) for a teammate to be close unless time is short
-      if (P.stage === P.route.length - 1 && M.timeLeft > 60 && !this.rallyDone) {
+      // nobody runs straight in: hold outside the entry for the first stretch of the round (teams drone / set up first)
+      if (P.stage <= 1 && M.timeLeft > 60) { if (this.enterAt === undefined) this.enterAt = 12 + Math.random() * 20 + (this.role === 'rusher' ? -8 : 0); if (M.s.actionTime - M.timeLeft < this.enterAt) { this.stop(); this.state = 'stage'; C.stance = Stance.CROUCH; const d = site.center.clone().sub(C.pos); this.holdYaw = Math.atan2(-d.x, -d.z); this.holdSpot = C.pos; return; } }
+      if (P.stage === 2 && M.timeLeft > 60 && !this.rallyDone) {
         const near = g.characters.filter(c => c.side === 'atk' && !c.dead && !c.dbno && c !== C && c.pos.distanceTo(C.pos) < 9).length;
         const atSite = g.characters.some(c => c.side === 'atk' && !c.dead && c !== C && c.pos.distanceTo(site.center) < 8);
         if (near === 0 && !atSite && this.rallyT < 12) { this.rallyT = (this.rallyT || 0) + dt; this.stop(); this.state = 'rally'; C.stance = Stance.CROUCH; return; }

@@ -10,6 +10,9 @@ import { healthFor } from '../data/operators.js';
 const ARM_BONES = { left: ['LeftArm', 'LeftForeArm', 'LeftHand'], right: ['RightArm', 'RightForeArm', 'RightHand'] };
 const PROC_BONES = ['Spine', 'Spine01', 'Spine02', 'neck'];   // bones the procedural aim layer rotates on top of the animation
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _m = new THREE.Matrix4();
+// scratch for IK (no per-frame allocation)
+const _ikA = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikC = new THREE.Vector3(), _ikT = new THREE.Vector3(), _ikP = new THREE.Vector3(), _ikE = new THREE.Vector3(), _ikU = new THREE.Vector3(), _ikD = new THREE.Vector3(), _ikS = new THREE.Vector3(), _ikQ = new THREE.Quaternion(), _ikDQ = new THREE.Quaternion();
+const _hT = new THREE.Vector3(), _hH = new THREE.Vector3(), _hF = new THREE.Vector3(), _hR = new THREE.Vector3(), _hAl = new THREE.Vector3(), _hUp = new THREE.Vector3(), _hY = new THREE.Vector3(), _hZ = new THREE.Vector3(), _hX = new THREE.Vector3(), _hWQ = new THREE.Quaternion();
 
 export const Stance = { STAND: 0, CROUCH: 1, PRONE: 2 };
 export const EYE_HEIGHT = { 0: 1.62, 1: 1.08, 2: 0.42 };
@@ -189,7 +192,7 @@ export class Character {
         up.getWorldPosition(_v); // hip joint
         const footTarget = _v3.set(_v.x, this.pos.y + 0.08, _v.z);
         // knee hint: forward of the character
-        const hint = _v2.copy(footTarget).addScaledVector(this.forwardFlat(new THREE.Vector3()), 1.5); hint.y += 0.6;
+        const hint = _v2.copy(footTarget).addScaledVector(this.forwardFlat(_hF), 1.5); hint.y += 0.6;
         this._twoBone(up, lo, ft, footTarget, hint, this.legLen.thigh, this.legLen.shin);
       }
     } else { hips.position.y = this.hipsRestY; hips.position.z = 0; }
@@ -265,24 +268,22 @@ export class Character {
     if (this.stance === Stance.PRONE && !this.dead) { /* keep animated */ }
     const B = this.bones;
     this.model.updateMatrixWorld(true);
-    const fwd = this.forwardFlat(new THREE.Vector3()); const right = this.right(new THREE.Vector3());
+    if (this.dead) return;
+    const fwd = this.forwardFlat(_hF); const right = this.right(_hR);
+    const wq = this.tpWeapon.getWorldQuaternion(_hWQ);
+    const along = _hAl.set(-1, 0, 0).applyQuaternion(wq);        // muzzle direction
+    const wup = _hUp.set(0, 1, 0).applyQuaternion(wq);
     for (const side of ['left', 'right']) {
       const [uN, lN, hN] = ARM_BONES[side]; const up = B[uN], lo = B[lN], hand = B[hN];
-      const target = this.gripWorld(side, new THREE.Vector3());
-      if (this.dead) continue;
+      const target = this.gripWorld(side, _hT);
       // elbow hint: down and outward
-      up.getWorldPosition(_v);
-      const hint = new THREE.Vector3().copy(_v).addScaledVector(right, side === 'left' ? -0.6 : 0.8).addScaledVector(fwd, -0.2); hint.y -= 0.9;
-      this._twoBone(up, lo, hand, target, hint, this.boneLen[side].upper, this.boneLen[side].lower);
+      up.getWorldPosition(_hH);
+      _hH.addScaledVector(right, side === 'left' ? -0.6 : 0.8).addScaledVector(fwd, -0.2); _hH.y -= 0.9;
+      this._twoBone(up, lo, hand, target, _hH, this.boneLen[side].upper, this.boneLen[side].lower);
       // hand orientation: point the hand (+Y toward child) along the weapon, palm inward
-      const wq = this.tpWeapon.getWorldQuaternion(new THREE.Quaternion());
-      const along = new THREE.Vector3(-1, 0, 0).applyQuaternion(wq);        // muzzle direction
-      const wup = new THREE.Vector3(0, 1, 0).applyQuaternion(wq);
-      let yAxis;
-      if (side === 'right') yAxis = along.clone().multiplyScalar(0.35).addScaledVector(wup, -1).normalize();
-      else yAxis = along.clone().multiplyScalar(1).addScaledVector(wup, -0.35).normalize();
-      const zAxis = new THREE.Vector3().crossVectors(yAxis, side === 'left' ? wup.clone().negate() : wup).normalize();
-      const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+      const yAxis = side === 'right' ? _hY.copy(along).multiplyScalar(0.35).addScaledVector(wup, -1).normalize() : _hY.copy(along).addScaledVector(wup, -0.35).normalize();
+      const zAxis = side === 'left' ? _hZ.copy(wup).negate() : _hZ.copy(wup); zAxis.crossVectors(yAxis, zAxis).normalize();
+      const xAxis = _hX.crossVectors(yAxis, zAxis).normalize();
       _m.makeBasis(xAxis, yAxis, zAxis); _q.setFromRotationMatrix(_m);
       setWorldQuat(hand, _q);
     }
@@ -290,21 +291,21 @@ export class Character {
 
   // Generic two-bone IK in world space.
   _twoBone(up, lo, end, target, hint, l1, l2) {
-    const a = up.getWorldPosition(new THREE.Vector3()), b = lo.getWorldPosition(new THREE.Vector3()), c = end.getWorldPosition(new THREE.Vector3());
-    const ws = up.getWorldScale(new THREE.Vector3()).x; l1 *= ws; l2 *= ws;
-    const toT = new THREE.Vector3().subVectors(target, a); let d = toT.length(); if (d < 1e-4) return;
+    const a = up.getWorldPosition(_ikA), b = lo.getWorldPosition(_ikB), c = end.getWorldPosition(_ikC);
+    const ws = up.getWorldScale(_ikS).x; l1 *= ws; l2 *= ws;
+    const toT = _ikT.subVectors(target, a); let d = toT.length(); if (d < 1e-4) return;
     d = Math.min(d, (l1 + l2) * 0.995); toT.normalize();
     const cosA = Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d)));
     const sinA = Math.sqrt(1 - cosA * cosA);
-    const pole = new THREE.Vector3().subVectors(hint, a); pole.addScaledVector(toT, -pole.dot(toT)); if (pole.lengthSq() < 1e-6) pole.set(0, -1, 0).addScaledVector(toT, toT.y); pole.normalize();
-    const elbow = new THREE.Vector3().copy(a).addScaledVector(toT, l1 * cosA).addScaledVector(pole, l1 * sinA);
+    const pole = _ikP.subVectors(hint, a); pole.addScaledVector(toT, -pole.dot(toT)); if (pole.lengthSq() < 1e-6) pole.set(0, -1, 0).addScaledVector(toT, toT.y); pole.normalize();
+    const elbow = _ikE.copy(a).addScaledVector(toT, l1 * cosA).addScaledVector(pole, l1 * sinA);
     // rotate upper
-    const curU = new THREE.Vector3().subVectors(b, a).normalize(); const desU = new THREE.Vector3().subVectors(elbow, a).normalize();
-    const uq = up.getWorldQuaternion(new THREE.Quaternion()); const dq = new THREE.Quaternion().setFromUnitVectors(curU, desU); uq.premultiply(dq); setWorldQuat(up, uq);
+    const curU = _ikU.subVectors(b, a).normalize(); const desU = _ikD.subVectors(elbow, a).normalize();
+    const uq = up.getWorldQuaternion(_ikQ); const dq = _ikDQ.setFromUnitVectors(curU, desU); uq.premultiply(dq); setWorldQuat(up, uq);
     // rotate lower
     lo.getWorldPosition(b); end.getWorldPosition(c);
-    const curL = new THREE.Vector3().subVectors(c, b).normalize(); const desL = new THREE.Vector3().subVectors(target, b).normalize();
-    const lq = lo.getWorldQuaternion(new THREE.Quaternion()); dq.setFromUnitVectors(curL, desL); lq.premultiply(dq); setWorldQuat(lo, lq);
+    const curL = _ikU.subVectors(c, b).normalize(); const desL = _ikD.subVectors(target, b).normalize();
+    const lq = lo.getWorldQuaternion(_ikQ); dq.setFromUnitVectors(curL, desL); lq.premultiply(dq); setWorldQuat(lo, lq);
   }
 
   // ---------- hitboxes ----------
@@ -313,15 +314,17 @@ export class Character {
     this._hbStale = false;
     const B = this.bones; const hb = this.hitboxes; hb.length = 0;
     const P = n => B[n].getWorldPosition(new THREE.Vector3());
+    // generous, Siege-like hitboxes: the helmet counts as head, the vest/shoulders as torso
     const head = P('Head'); head.y += 0.07;
-    hb.push({ zone: 'head', type: 'sphere', c: head, r: 0.135 });
-    const hips = P('Hips'); const neck = P('neck');
-    hb.push({ zone: 'torso', type: 'capsule', a: hips, b: neck, r: 0.21 });
+    hb.push({ zone: 'head', type: 'sphere', c: head, r: 0.15 });
+    const hips = P('Hips'); const neck = P('neck'); hips.y -= 0.06;
+    hb.push({ zone: 'torso', type: 'capsule', a: hips, b: neck, r: 0.245 });
+    hb.push({ zone: 'torso', type: 'capsule', a: P('LeftShoulder'), b: P('RightShoulder'), r: 0.13 });
     for (const s of ['Left', 'Right']) {
-      hb.push({ zone: 'limb', type: 'capsule', a: P(s + 'Arm'), b: P(s + 'ForeArm'), r: 0.07 });
-      hb.push({ zone: 'limb', type: 'capsule', a: P(s + 'ForeArm'), b: P(s + 'Hand'), r: 0.06 });
-      hb.push({ zone: 'limb', type: 'capsule', a: P(s + 'UpLeg'), b: P(s + 'Leg'), r: 0.1 });
-      hb.push({ zone: 'limb', type: 'capsule', a: P(s + 'Leg'), b: P(s + 'Foot'), r: 0.08 });
+      hb.push({ zone: 'limb', type: 'capsule', a: P(s + 'Arm'), b: P(s + 'ForeArm'), r: 0.09 });
+      hb.push({ zone: 'limb', type: 'capsule', a: P(s + 'ForeArm'), b: P(s + 'Hand'), r: 0.075 });
+      hb.push({ zone: 'limb', type: 'capsule', a: P(s + 'UpLeg'), b: P(s + 'Leg'), r: 0.12 });
+      hb.push({ zone: 'limb', type: 'capsule', a: P(s + 'Leg'), b: P(s + 'Foot'), r: 0.095 });
     }
     // coarse bounds
     this.boundsMin = new THREE.Vector3(Infinity, Infinity, Infinity); this.boundsMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);

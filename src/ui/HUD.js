@@ -34,9 +34,14 @@ export class HUD {
       <div class="hud-drone" id="hud-drone"><div class="frame"></div><div class="noise"></div><div class="label">DRONE CAM<small id="hud-drone-sub">SIGNAL OK</small></div><div class="bat" id="hud-drone-bat"></div>
         <div class="reticle" id="hud-drone-ret"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="22" class="ring"/><circle cx="32" cy="32" r="22" class="prog" id="hud-drone-prog"/><circle cx="32" cy="32" r="2" class="dot"/></svg><div class="hint" id="hud-drone-hint"></div></div>
         <div class="jam" id="hud-drone-jam">SIGNAL JAMMED</div></div>
+      <div class="hud-spec" id="hud-spec" style="display:none"></div>
       <div id="scoreboard"></div>
     `;
     this.$ = id => h.querySelector('#' + id);
+    this._cache = new Map();
+    // DOM writes are the expensive part of the HUD: only touch a node when its content really changed
+    this.setHTML = (el, html) => { const k = el.id || el; if (this._cache.get(k) === html) return; this._cache.set(k, html); el.innerHTML = html; };
+    this.setText = (el, txt) => { const k = (el.id || '') + ':t'; if (this._cache.get(k) === txt) return; this._cache.set(k, txt); el.textContent = txt; };
     this.toasts = []; this.bigT = 0; this.markers = new Map(); this.dmgInds = [];
     this.promptEl = this.$('hud-prompt'); this.progressEl = this.$('hud-progress'); this.progressFill = this.$('hud-progress-fill'); this.progressLabel = this.$('hud-progress-label');
     this.lastAmmo = -1; this._buildCompass();
@@ -75,15 +80,16 @@ export class HUD {
   stun(intensity) { const s = this.$('hud-stun'); s.style.transition = 'none'; s.style.opacity = Math.min(1, intensity * 1.2); requestAnimationFrame(() => { s.style.transition = `opacity ${1.5 + intensity * 3}s ease-in`; s.style.opacity = 0; }); }
   drone(on) { this.$('hud-drone').classList.toggle('on', on); this.$('hud-cross').style.opacity = on ? 0 : 1; }
   _droneHud() {
-    const g = this.game; const P = g.player; const d = P.drone; const M = g.match; if (!d) return;
+    const g = this.game; const P = g.player; const d = P.usingCam ? P.camView : P.drone; const M = g.match; if (!d) return;
     const prog = this.$('hud-drone-prog'); const C = 2 * Math.PI * 22; prog.style.strokeDasharray = C; prog.style.strokeDashoffset = C * (1 - d.scanFrac);
     const ret = this.$('hud-drone-ret'); ret.classList.toggle('hover', !!d.hover); ret.classList.toggle('scanning', d.scanT > 0.05);
     this.$('hud-drone-hint').textContent = d.jammed ? '' : d.hover ? (d.scanT > 0.05 ? 'IDENTIFYING' : 'HOLD X — IDENTIFY') : '';
     this.$('hud-drone-jam').style.opacity = d.jammed ? 1 : 0;
-    this.$('hud-drone-sub').textContent = d.jammed ? 'NO SIGNAL' : 'SIGNAL OK · DRONES ' + P.dronesLeft;
-    this.$('hud-drone-bat').textContent = (M.phase === 'prep' ? 'PREPARATION — LOCATE THE OBJECTIVE' : '5 — RETURN TO OPERATOR') + ' · Z — PING · SPACE — JUMP';
+    if (d.isCam) { const cams = g.level.cameras; this.$('hud-drone').querySelector('.label').firstChild.textContent = 'CAM — ' + d.name; this.$('hud-drone-sub').textContent = 'CAMERAS ONLINE ' + cams.filter(c => c.alive).length + ' / ' + cams.length; this.$('hud-drone-bat').textContent = '5 — RETURN TO OPERATOR · Q / E — NEXT CAMERA · Z — PING'; }
+    else { this.$('hud-drone').querySelector('.label').firstChild.textContent = 'DRONE CAM'; this.$('hud-drone-sub').textContent = d.jammed ? 'NO SIGNAL' : 'SIGNAL OK · DRONES ' + P.dronesLeft; this.$('hud-drone-bat').textContent = (M.phase === 'prep' ? 'PREPARATION — LOCATE THE OBJECTIVE' : '5 — RETURN TO OPERATOR') + ' · Z — PING · SPACE — JUMP'; }
   }
   dbno(on) { this.$('hud-dbno').style.display = on ? 'block' : 'none'; }
+  spectate(target) { const e = this.$('hud-spec'); if (!target) { e.style.display = 'none'; return; } e.style.display = 'block'; this.setHTML(e, `<small>SPECTATING</small>${target.name}<span>LMB / RMB — SWITCH TEAMMATE</span>`); }
   gadgetSlot(slot) { this.equippedSlot = slot; this.refreshGadgets(); }
 
   refreshGadgets() {
@@ -103,23 +109,23 @@ export class HUD {
     const g = this.game; const M = g.match; const P = g.player; if (!P) return; const C = P.char;
     // timer
     const t = Math.max(0, M.timeLeft); const mm = Math.floor(t / 60), ss = Math.floor(t % 60);
-    const te = this.$('hud-timer'); te.firstChild.textContent = M.phase === 'planted' ? t.toFixed(1) : `${mm}:${ss.toString().padStart(2, '0')}`;
-    this.$('hud-timer-sub').textContent = M.phase === 'prep' ? 'PREPARATION' : M.phase === 'planted' ? 'DEFUSER' : M.phase === 'action' ? 'ROUND ' + M.round : M.phase === 'roundEnd' ? 'ROUND OVER' : '';
+    const te = this.$('hud-timer'); const ts = M.phase === 'planted' ? t.toFixed(1) : `${mm}:${ss.toString().padStart(2, '0')}`; if (this._cache.get('timer') !== ts) { this._cache.set('timer', ts); te.firstChild.textContent = ts; }
+    this.setText(this.$('hud-timer-sub'), M.phase === 'prep' ? 'PREPARATION' : M.phase === 'planted' ? 'DEFUSER' : M.phase === 'action' ? 'ROUND ' + M.round : M.phase === 'roundEnd' ? 'ROUND OVER' : '');
     te.className = 'hud-timer' + (M.phase === 'planted' ? ' crit' : t < 30 && M.phase === 'action' ? ' warn' : '');
     // teams
     const atk = g.characters.filter(c => c.side === 'atk'), def = g.characters.filter(c => c.side === 'def');
     const left = M.playerSide === 'atk' ? atk : def, right = M.playerSide === 'atk' ? def : atk;
     const pips = arr => arr.map(c => `<i class="${c.dead ? 'dead' : c.dbno ? 'dbno' : ''} ${c.hasDefuser ? 'defuser' : ''}" title="${c.name}"></i>`).join('');
-    const L = this.$('hud-teamL'), R = this.$('hud-teamR'); L.className = 'hud-team ' + M.playerSide; R.className = 'hud-team ' + (M.playerSide === 'atk' ? 'def' : 'atk'); L.innerHTML = pips(left); R.innerHTML = pips(right);
-    this.$('hud-score').innerHTML = `<b>${M.score.A}</b> — <b>${M.score.B}</b>`;
+    const L = this.$('hud-teamL'), R = this.$('hud-teamR'); L.className = 'hud-team ' + M.playerSide; R.className = 'hud-team ' + (M.playerSide === 'atk' ? 'def' : 'atk'); this.setHTML(L, pips(left)); this.setHTML(R, pips(right));
+    this.setHTML(this.$('hud-score'), `<b>${M.score.A}</b> — <b>${M.score.B}</b>`);
     // health
     const hp = Math.max(0, C.health); this.$('hud-hp').style.width = (hp / C.maxHealth * 100) + '%'; this.$('hud-armor').style.width = C.armorPlate ? '100%' : '0'; this.$('hud-armor').style.opacity = C.armorPlate ? 0.35 : 0;
-    this.$('hud-hpnum').textContent = C.dbno ? 'DOWNED' : `${Math.ceil(hp)} / ${C.maxHealth}` + (C.armorPlate ? ' + ARMOR' : '');
+    this.setText(this.$('hud-hpnum'), C.dbno ? 'DOWNED' : `${Math.ceil(hp)} / ${C.maxHealth}` + (C.armorPlate ? ' + ARMOR' : ''));
     this.$('hud-lowhp').style.opacity = C.dbno ? 0.9 : hp < 35 && !C.dead ? (1 - hp / 35) * 0.8 : 0;
     this.$('hud-emp').style.opacity = C.empd > 0 ? 0.5 : 0;
     // ammo
     const w = C.weapon;
-    if (w) { const mag = this.$('hud-mag'); mag.textContent = w.ammo; mag.className = 'mag' + (w.ammo === 0 ? ' empty' : w.ammo <= w.def.mag * 0.25 ? ' low' : ''); this.$('hud-res').textContent = '/ ' + w.reserve; this.$('hud-weapon').innerHTML = `${w.def.name}<span class="hud-mode">${w.def.modes.map(m => `<i class="${m === w.mode ? 'on' : ''}"></i>`).join('')}</span>` + (w.reloading ? ' <b>RELOADING</b>' : ''); this.$('hud-slots').innerHTML = C.weapons.slice(0, 2).map((x, i) => `<i class="${i === C.weaponIndex ? 'on' : ''}"></i>`).join(''); }
+    if (w) { const mag = this.$('hud-mag'); this.setText(mag, String(w.ammo)); mag.className = 'mag' + (w.ammo === 0 ? ' empty' : w.ammo <= w.def.mag * 0.25 ? ' low' : ''); this.setText(this.$('hud-res'), '/ ' + w.reserve); this.setHTML(this.$('hud-weapon'), `${w.def.name}<span class="hud-mode">${w.def.modes.map(m => `<i class="${m === w.mode ? 'on' : ''}"></i>`).join('')}</span>` + (w.reloading ? ' <b>RELOADING</b>' : '')); this.setHTML(this.$('hud-slots'), C.weapons.slice(0, 2).map((x, i) => `<i class="${i === C.weaponIndex ? 'on' : ''}"></i>`).join('')); }
     // crosshair: hide when ADS or dead
     const cross = this.$('hud-cross'); const spread = w ? (P.adsBlend > 0.5 ? 0 : (4 + C.speedNorm * 6 + (C.stance === 0 ? 2 : 0))) : 4;
     cross.style.opacity = (P.adsBlend > 0.5 || C.dead || P.usingDrone || C.dbno) ? 0 : 1;
@@ -133,7 +139,7 @@ export class HUD {
     // damage indicators
     for (let i = this.dmgInds.length - 1; i >= 0; i--) { const d = this.dmgInds[i]; d.t -= dt; if (d.t <= 0) { d.el.remove(); this.dmgInds.splice(i, 1); continue; } const dx = d.pos.x - C.pos.x, dz = d.pos.z - C.pos.z; const ang = Math.atan2(dx, -dz) - (-C.yaw); d.el.style.transform = `rotate(${-ang * 180 / Math.PI}deg)`; d.el.style.opacity = Math.min(1, d.t); }
     this.dbno(C.dbno && !C.dead);
-    if (P.usingDrone) this._droneHud();
+    if (P.usingDrone || P.usingCam) this._droneHud();
     this._markers();
     if (this.scoreboardOn) this._scoreboard();
   }

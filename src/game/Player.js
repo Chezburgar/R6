@@ -103,6 +103,7 @@ export class Player {
     this.scopeMat = new THREE.ShaderMaterial({ vertexShader: SCOPE_VERT, fragmentShader: SCOPE_FRAG, uniforms: { uTex: { value: this.scopeRT.texture }, uRes: { value: new THREE.Vector2(1, 1) }, uCenter: { value: new THREE.Vector2() }, uLensPx: { value: 100 }, uAlign: { value: 0 }, uReticle: { value: 1 } } });
     this.scopeMat.toneMapped = false;
   }
+  setScopeRes(n) { if (this.scopeRT.width === n) return; this.scopeRT.setSize(n, n); }
   _buildArms() {
     const c = Assets.cloneSkinned(this.op.model); if (!c) return;
     this.arms = c.scene; this.arms.name = 'fparms';
@@ -144,8 +145,10 @@ export class Player {
   update(dt) {
     const C = this.char; const g = this.game;
     C.stunned = Math.max(0, C.stunned - dt);
-    if (this.drone) this.drone.mesh.visible = !this.usingDrone;
+    if (this.drone) { this.drone.mesh.visible = !this.usingDrone; if (!this.usingDrone) this.drone.update(dt, false); }
     if (this.usingDrone && this.drone) { this.drone.update(dt); this._placeCameraDrone(); this._hideVM(true); return; }
+    if (this.usingCam && this.camView && !C.dead && !C.dbno) { this._camUpdate(dt); this._hideVM(true); return; }
+    if (this.usingCam) this.exitCam();
     this._hideVM(false);
     if (C.dead) { this._deadCamera(dt); return; }
     // --- look ---
@@ -162,6 +165,8 @@ export class Player {
       const base = Math.atan2(-this.rappel.normal.x, -this.rappel.normal.z); // facing into the wall
       let d = this.yaw - base; d = Math.atan2(Math.sin(d), Math.cos(d)); d = Math.max(-1.5, Math.min(1.5, d)); this.yaw = base + d;
     }
+    // floor work (planting / defusing): the view settles onto the device
+    if (this.interaction && this.interaction.crouch && this.interaction.hand) { const hp = this.interaction.hand(_v3); const dx = hp.x - this.camera.position.x, dy = hp.y - this.camera.position.y, dz = hp.z - this.camera.position.z; const wantYaw = Math.atan2(-dx, -dz); let dyaw = wantYaw - this.yaw; dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw)); this.yaw += dyaw * Math.min(1, dt * 6); const wantPitch = THREE.MathUtils.clamp(Math.atan2(dy, Math.hypot(dx, dz)) + 0.15, -1.0, 0.1); this.pitch = THREE.MathUtils.damp(this.pitch, wantPitch, 6, dt); }
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
     // recoil recovery
     const rec = w ? w.def.recoil.rec : 20;
@@ -188,7 +193,8 @@ export class Player {
 
   _stances(dt) {
     const C = this.char;
-    if (Input.hit('crouch')) { if (C.stance === Stance.CROUCH) this._tryStance(Stance.STAND); else this._tryStance(Stance.CROUCH); }
+    if (this.interaction && this.interaction.crouch) { if (C.stance === Stance.STAND) this._tryStance(Stance.CROUCH); }
+    else if (Input.hit('crouch')) { if (C.stance === Stance.CROUCH) this._tryStance(Stance.STAND); else this._tryStance(Stance.CROUCH); }
     if (Input.hit('prone')) { if (C.stance === Stance.PRONE) this._tryStance(Stance.CROUCH); else this._tryStance(Stance.PRONE); }
     const wantSprint = Input.down('sprint') && C.stance === Stance.STAND && !Input.aim() && (Input.down('forward')) && !this.interaction && !C.trapped;
     C.sprinting = wantSprint;
@@ -444,14 +450,55 @@ export class Player {
   }
   _deadCamera(dt) {
     const C = this.char; const cam = this.camera;
-    // camera settles at head of the fallen body
     this._deathT = (this._deathT || 0) + dt;
+    if (this._deathT > 3.2 && this._spectate(dt)) return;
+    // camera settles at head of the fallen body
     const head = C.bones ? C.bones.Head.getWorldPosition(_v) : C.pos.clone();
     const target = _v2.set(head.x, Math.max(C.pos.y + 0.25, head.y + 0.15), head.z);
     cam.position.lerp(target, Math.min(1, dt * 4));
     cam.rotation.z = THREE.MathUtils.damp(cam.rotation.z, 0.6, 3, dt); cam.rotation.x = THREE.MathUtils.damp(cam.rotation.x, -0.2, 3, dt);
     cam.updateMatrixWorld(true);
     this._hideVM(true);
+  }
+  // Third-person over-the-shoulder view of a living teammate; LMB / RMB (or A / D) switch.
+  _spectate(dt) {
+    const g = this.game; const cam = this.camera; const hud = g.hud;
+    const mates = g.characters.filter(c => c !== this.char && c.side === this.side && !c.dead);
+    if (!mates.length) { this.specTarget = null; hud.spectate && hud.spectate(null); return false; }
+    if (!this.specTarget || this.specTarget.dead || !mates.includes(this.specTarget)) { this.specIdx = 0; this.specTarget = mates[0]; this._specPos = null; }
+    if (Input.fireHit() || Input.hit('right')) { this.specIdx = (mates.indexOf(this.specTarget) + 1) % mates.length; this.specTarget = mates[this.specIdx]; this._specPos = null; g.audio.click('hover'); }
+    if (Input.aimHit() || Input.hit('left')) { this.specIdx = (mates.indexOf(this.specTarget) - 1 + mates.length) % mates.length; this.specTarget = mates[this.specIdx]; this._specPos = null; g.audio.click('hover'); }
+    const T = this.specTarget; const eye = T.eyePos(_v); const fwd = T.forward(_v2); const right = T.right(_v3);
+    const desired = new THREE.Vector3().copy(eye).addScaledVector(fwd, -1.8).addScaledVector(right, 0.42); desired.y += 0.3;
+    const dir = desired.clone().sub(eye); const len = dir.length(); dir.normalize();
+    const h = g.world.raycast(eye, dir, len + 0.25, { filter: c => c.solid && c.blocksVision !== false });
+    if (h) desired.copy(eye).addScaledVector(dir, Math.max(0.35, h.dist - 0.25));
+    if (!this._specPos) this._specPos = desired.clone(); else this._specPos.lerp(desired, Math.min(1, dt * 9));
+    cam.position.copy(this._specPos); cam.rotation.set(0, 0, 0, 'YXZ'); cam.rotation.y = T.yaw; cam.rotation.x = T.pitch;
+    cam.fov = THREE.MathUtils.damp(cam.fov, g.settings.fov, 8, dt); cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
+    this._hideVM(true); hud.spectate && hud.spectate(T);
+    return true;
+  }
+  // ---------- defender security cameras ----------
+  enterCam(idx) {
+    const cams = this.game.level.cameras.filter(c => c.alive); if (!cams.length) { this.game.hud.toast('NO CAMERAS ONLINE', 1.5); return false; }
+    const cam = cams[((idx % cams.length) + cams.length) % cams.length];
+    this.usingCam = true; this.camView = { cam, yaw: cam.yaw, pitch: cam.pitch, intel: new ObsIntel(this.game), get hover() { return this.intel.hover; }, get scanT() { return this.intel.scanT; }, get scanFrac() { return this.intel.scanFrac; }, jammed: false, isCam: true, get name() { return this.cam.name; } };
+    this.game.hud.drone(true); this.game.audio.click('ui'); return true;
+  }
+  exitCam() { this.usingCam = false; this.camView = null; this.game.hud.drone(false); }
+  _camUpdate(dt) {
+    const V = this.camView; const g = this.game; const cams = g.level.cameras.filter(c => c.alive);
+    if (!V.cam.alive) { const next = cams[0]; if (!next) { this.exitCam(); g.hud.toast('CAMERA DESTROYED', 1.5); return; } V.cam = next; V.yaw = next.yaw; V.pitch = next.pitch; g.hud.toast('CAMERA DESTROYED — SWITCHING', 1.5); }
+    if (Input.hit('leanR') || Input.fireHit()) { const i = cams.indexOf(V.cam); V.cam = cams[(i + 1) % cams.length]; V.yaw = V.cam.yaw; V.pitch = V.cam.pitch; g.audio.click('hover'); }
+    if (Input.hit('leanL') || Input.aimHit()) { const i = cams.indexOf(V.cam); V.cam = cams[(i - 1 + cams.length) % cams.length]; V.yaw = V.cam.yaw; V.pitch = V.cam.pitch; g.audio.click('hover'); }
+    const sens = 0.0018; V.yaw -= Input.mouse.dx * sens; V.pitch -= Input.mouse.dy * sens;
+    // a mounted camera only pans so far
+    let dy = V.yaw - V.cam.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); dy = THREE.MathUtils.clamp(dy, -0.85, 0.85); V.yaw = V.cam.yaw + dy;
+    V.pitch = THREE.MathUtils.clamp(V.pitch, -1.0, 0.25);
+    const cam = this.camera; cam.position.copy(V.cam.pos); cam.rotation.set(0, 0, 0, 'YXZ'); cam.rotation.y = V.yaw; cam.rotation.x = V.pitch; cam.fov = THREE.MathUtils.damp(cam.fov, 78, 10, dt); cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
+    const dir = _v2.set(-Math.sin(V.yaw) * Math.cos(V.pitch), Math.sin(V.pitch), -Math.cos(V.yaw) * Math.cos(V.pitch));
+    V.intel.update(dt, cam.position, dir, false, this.char);
   }
   _placeCameraDrone() { const d = this.drone; const cam = this.camera; d.mesh.visible = false; cam.position.copy(d.pos); cam.position.y += 0.2; cam.rotation.set(0, 0, 0, 'YXZ'); cam.rotation.y = d.yaw; cam.rotation.x = d.pitch; cam.fov = THREE.MathUtils.damp(cam.fov, 82, 10, 0.016); cam.updateProjectionMatrix(); cam.updateMatrixWorld(true); }
   _hideVM(hide) { this.vm.visible = !hide; if (this.arms) this.arms.visible = !hide && !this.char.dead; if (hide) this.redDot.visible = false; }
@@ -550,7 +597,7 @@ export class Player {
     // working with the support hand (barricade planks): the short rig arm can't reach the work, so the
     // unseen body leans in toward it and the hand is kept up at eye level where the camera sees it
     let handGoal = null;
-    if (this.interaction && this.interaction.hand) { handGoal = this.interaction.hand(new THREE.Vector3()); handGoal.y = Math.min(handGoal.y, cam.position.y - 0.14); const d = handGoal.clone().sub(cam.position); d.y = 0; const reach = Math.max(0, d.length() - 0.42); this._leanIn = THREE.MathUtils.damp(this._leanIn || 0, Math.min(0.5, reach), 10, dt); if (d.lengthSq() > 1e-4) A.position.addScaledVector(d.normalize(), this._leanIn); }
+    if (this.interaction && this.interaction.hand) { handGoal = this.interaction.hand(new THREE.Vector3()); handGoal.y = this.interaction.crouch ? Math.max(handGoal.y, cam.position.y - 0.62) : Math.min(handGoal.y, cam.position.y - 0.14); const d = handGoal.clone().sub(cam.position); d.y = 0; const reach = Math.max(0, d.length() - 0.42); this._leanIn = THREE.MathUtils.damp(this._leanIn || 0, Math.min(0.5, reach), 10, dt); if (d.lengthSq() > 1e-4) A.position.addScaledVector(d.normalize(), this._leanIn); }
     else this._leanIn = THREE.MathUtils.damp(this._leanIn || 0, 0, 10, dt);
     A.updateMatrixWorld(true);
     const B = this.armBones;
@@ -604,51 +651,63 @@ function smooth(t) { return t * t * (3 - 2 * t); }
 
 const SCAN_TIME = 1.1;   // seconds the reticle must stay on an enemy to identify them
 
+// Identify / ping logic shared by drones and security cameras.
+class ObsIntel {
+  constructor(game) { this.game = game; this.hover = null; this.scanT = 0; this.scanCooldown = 0; this._tick = 0; this.pingT = -9; }
+  get scanFrac() { return Math.min(1, this.scanT / SCAN_TIME); }
+  update(dt, origin, dir, jammed, me) {
+    const g = this.game; let hover = null, hd = 32;
+    for (const ch of g.characters) { if (ch.side === me.side || ch.dead) continue; const r = ch.raycast(origin, dir, hd); if (r && r.dist < hd && g.world.visible(origin, r.point)) { hover = ch; hd = r.dist; } }
+    this.hover = hover; this.scanCooldown = Math.max(0, this.scanCooldown - dt);
+    if (Input.down('scan') && hover && !jammed && this.scanCooldown <= 0) {
+      this.scanT += dt; this._tick += dt;
+      if (this._tick > 0.13) { this._tick = 0; g.audio.scanTick(this.scanT / SCAN_TIME); }
+      if (this.scanT >= SCAN_TIME) { g.identify(hover, me); this.scanT = 0; this.scanCooldown = 0.9; }
+    } else { this.scanT = Math.max(0, this.scanT - dt * 2.5); this._tick = 0; }
+    if (Input.hit('ping') && g.time - this.pingT > 0.6 && !jammed) { this.pingT = g.time; g.ping(origin.clone(), dir.clone(), me); }
+  }
+}
+
 // Attacker drone: driven during the preparation phase, and again from the operator later (5 / X).
 export class Drone {
   constructor(game, pos, yaw) {
     this.game = game; this.pos = pos.clone(); this.yaw = yaw; this.pitch = -0.1; this.vel = new THREE.Vector3(); this.grounded = true;
     this.mesh = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), new THREE.MeshStandardMaterial({ color: 0x1a1d22, roughness: 0.5, metalness: 0.6 }));
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.05, 16), new THREE.MeshStandardMaterial({ color: 0x0c0d10, roughness: 0.9 }));
-    const wl = wheel.clone(); wl.rotation.z = Math.PI / 2; wl.position.x = -0.14; const wr = wheel.clone(); wr.rotation.z = Math.PI / 2; wr.position.x = 0.14;
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0x30c0ff, emissiveIntensity: 3 })); eye.position.set(0, 0.03, -0.11);
-    this.mesh.add(body, wl, wr, eye); this.mesh.position.copy(pos); game.scene.add(this.mesh);
-    this.light = new THREE.PointLight(0x30c0ff, 2, 3, 2); this.mesh.add(this.light);
-    this.dead = false; this.jammed = false;
-    this.hover = null; this.scanT = 0; this.scanCooldown = 0; this._tick = 0; this.pingT = -9;
+    // Shadow Rover model: +X is the lens side, ~1.9 m long in the file → 30 cm rover facing -Z
+    const model = Assets.cloneStatic('prop_drone');
+    if (model) { model.scale.setScalar(0.16); model.rotation.y = Math.PI / 2; model.position.y = 0.05; model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } }); this.mesh.add(model); }
+    else { const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), new THREE.MeshStandardMaterial({ color: 0x1a1d22, roughness: 0.5, metalness: 0.6 })); this.mesh.add(body); }
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.012, 8, 8), new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0x30c0ff, emissiveIntensity: 3 })); eye.position.set(0, 0.07, -0.16); this.mesh.add(eye);
+    this.mesh.position.copy(pos); game.scene.add(this.mesh);
+    this.light = new THREE.PointLight(0x30c0ff, 1.2, 2.5, 2); this.light.position.set(0, 0.1, -0.1); this.mesh.add(this.light);
+    this.dead = false; this.jammed = false; this.intel = new ObsIntel(game);
   }
-  update(dt) {
-    const sens = 0.0022; this.yaw -= Input.mouse.dx * sens; this.pitch = THREE.MathUtils.clamp(this.pitch - Input.mouse.dy * sens, -1.2, 1.2);
-    const f = (Input.down('forward') ? 1 : 0) - (Input.down('back') ? 1 : 0), r = (Input.down('right') ? 1 : 0) - (Input.down('left') ? 1 : 0);
+  // driven = the player is looking through it; otherwise it just sits (or finishes its throw) and keeps its mesh in place
+  update(dt, driven = true) {
+    const sens = 0.0022; if (driven) { this.yaw -= Input.mouse.dx * sens; this.pitch = THREE.MathUtils.clamp(this.pitch - Input.mouse.dy * sens, -1.2, 1.2); }
+    const f = driven ? (Input.down('forward') ? 1 : 0) - (Input.down('back') ? 1 : 0) : 0, r = driven ? (Input.down('right') ? 1 : 0) - (Input.down('left') ? 1 : 0) : 0;
     const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const wish = new THREE.Vector3().addScaledVector(fwd, f).addScaledVector(right, r); if (wish.lengthSq()) wish.normalize().multiplyScalar(this.jammed ? 0 : 4.2);
     this.vel.x = THREE.MathUtils.damp(this.vel.x, wish.x, 12, dt); this.vel.z = THREE.MathUtils.damp(this.vel.z, wish.z, 12, dt);
     this.vel.y -= 20 * dt;
-    if (Input.hit('jump') && this.grounded) this.vel.y = 4.2;
+    if (driven && Input.hit('jump') && this.grounded) this.vel.y = 4.2;
     const res = this.game.world.moveBox(this.pos, 0.13, 0.26, new THREE.Vector3(this.vel.x * dt, this.vel.y * dt, this.vel.z * dt), 0.22);
     if (res.grounded) this.vel.y = Math.max(0, this.vel.y); this.grounded = res.grounded;
-    this.mesh.position.copy(this.pos); this.mesh.position.y += 0.13; this.mesh.rotation.y = this.yaw;
+    this.mesh.position.copy(this.pos); this.mesh.position.y += 0.02; this.mesh.rotation.y = this.yaw;
     const jam = this.game.gadgets.isJammed(this.pos); this.jammed = jam;
-    // wheel spin
-    const sp = Math.hypot(this.vel.x, this.vel.z); this.mesh.children[1].rotation.x += sp * dt * 8; this.mesh.children[2].rotation.x += sp * dt * 8;
-    this._intel(dt);
+    // a little body rock while driving
+    const sp = Math.hypot(this.vel.x, this.vel.z); this.mesh.rotation.z = Math.sin(this.game.time * 22) * 0.02 * Math.min(1, sp / 3); this.mesh.rotation.x = -Math.min(0.06, (this.vel.y > 0.5 ? 0.06 : 0)) + (this.grounded ? 0 : 0.05);
+    if (driven) this._intel(dt);
   }
   // Identify (hold X on an enemy) and contextual ping (Z) from the drone camera.
   _intel(dt) {
-    const g = this.game; const me = g.player.char;
     const origin = _v.copy(this.pos); origin.y += 0.2;
     const dir = _v2.set(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
-    let hover = null, hd = 32;
-    for (const ch of g.characters) { if (ch.side === me.side || ch.dead) continue; const r = ch.raycast(origin, dir, hd); if (r && r.dist < hd && g.world.visible(origin, r.point)) { hover = ch; hd = r.dist; } }
-    this.hover = hover; this.scanCooldown = Math.max(0, this.scanCooldown - dt);
-    if (Input.down('scan') && hover && !this.jammed && this.scanCooldown <= 0) {
-      this.scanT += dt; this._tick += dt;
-      if (this._tick > 0.13) { this._tick = 0; g.audio.scanTick(this.scanT / SCAN_TIME); }
-      if (this.scanT >= SCAN_TIME) { g.identify(hover, me); this.scanT = 0; this.scanCooldown = 0.9; }
-    } else { this.scanT = Math.max(0, this.scanT - dt * 2.5); this._tick = 0; }
-    if (Input.hit('ping') && g.time - this.pingT > 0.6 && !this.jammed) { this.pingT = g.time; g.ping(origin.clone(), dir.clone(), me); }
+    if (!this.intel) this.intel = new ObsIntel(this.game);
+    this.intel.update(dt, origin, dir, this.jammed, this.game.player.char);
   }
-  get scanFrac() { return Math.min(1, this.scanT / SCAN_TIME); }
+  get hover() { return this.intel ? this.intel.hover : null; }
+  get scanT() { return this.intel ? this.intel.scanT : 0; }
+  get scanFrac() { return this.intel ? this.intel.scanFrac : 0; }
   dispose() { this.game.scene.remove(this.mesh); }
 }

@@ -28,6 +28,9 @@ F interact / rappel · RMB aim · LMB fire · R reload · B fire mode · V melee
 Leaning only works while aiming down sights (Siege rule). Attackers pick up the defuser in operator select; if nobody does it is
 assigned at random. Menu music is `assets/audio/menu_theme.mp3` (Menu Music volume in settings).
 
+Defenders: 5 / X cycle the security cameras (Q / E next, Z ping, hold X identify; attackers can shoot them out).
+When you die you spectate a teammate over the shoulder (LMB / RMB switch). Quality → performance for weaker GPUs.
+
 Drone: WASD drive · Space jump · hold **X** on an enemy to identify them (live red marker for the team) ·
 **Z** contextual ping · **5** back to the operator (during the action phase; the preparation phase is played from the drone).
 
