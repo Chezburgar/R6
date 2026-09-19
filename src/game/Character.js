@@ -14,6 +14,7 @@ const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.
 const _ikA = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikC = new THREE.Vector3(), _ikT = new THREE.Vector3(), _ikP = new THREE.Vector3(), _ikE = new THREE.Vector3(), _ikU = new THREE.Vector3(), _ikD = new THREE.Vector3(), _ikS = new THREE.Vector3(), _ikQ = new THREE.Quaternion(), _ikDQ = new THREE.Quaternion();
 const _hT = new THREE.Vector3(), _hH = new THREE.Vector3(), _hF = new THREE.Vector3(), _hR = new THREE.Vector3(), _hAl = new THREE.Vector3(), _hUp = new THREE.Vector3(), _hY = new THREE.Vector3(), _hZ = new THREE.Vector3(), _hX = new THREE.Vector3(), _hWQ = new THREE.Quaternion();
 
+let _uid = 0;
 export const Stance = { STAND: 0, CROUCH: 1, PRONE: 2 };
 export const EYE_HEIGHT = { 0: 1.62, 1: 1.08, 2: 0.42 };
 export const BODY_HEIGHT = { 0: 1.78, 1: 1.25, 2: 0.55 };
@@ -51,6 +52,7 @@ export class Character {
     this.tags = new Set();
     this.lowReady = 0; this.lowReadyTarget = 0;   // 1 = weapon held at low-ready (idle), 0 = shouldered/aiming
     this.nid = -1; this.pid = null; this.remote = false; this.isHuman = isPlayer;   // online identity
+    this.uid = ++_uid; this.hidden = false; this.noDBNO = false; this.noTarget = false; this.campaignKind = null;   // campaign: parked bots, terrorist-hunt deaths, the hostage
     this._build();
   }
 
@@ -365,7 +367,7 @@ export class Character {
     if (this.health <= 0) {
       const lethal = (zone === 'head' && kind === 'bullet') || kind === 'explosion' && dmg > 90;
       if (this.armorPlate && zone !== 'head') { this.armorPlate = false; this.goDBNO(attacker, dir); }
-      else if (lethal || kind === 'explosionKill') this.die(attacker, dir, zone === 'head');
+      else if (lethal || kind === 'explosionKill' || this.noDBNO) this.die(attacker, dir, zone === 'head');
       else this.goDBNO(attacker, dir);
     }
     this.onDamaged && this.onDamaged(dmg, attacker, dir, zone);

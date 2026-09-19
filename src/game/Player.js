@@ -633,6 +633,7 @@ export class Player {
     const hud = this.game.hud; if (!hud) return;
     hud.damage(dmg, attacker ? attacker.pos : null, this.char);
     this.camShake = Math.min(1, this.camShake + dmg / 60);
+    this.game.onPlayerDamaged && this.game.onPlayerDamaged(attacker);
   }
 
   // Render hook: draws the scope render target before the main pass.

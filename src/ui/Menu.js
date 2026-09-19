@@ -44,7 +44,7 @@ export class Menu {
   topbar(active) {
     const s = this.settings;
     return `<div class="topbar"><div class="logo"><span class="tc">TOM CLANCY'S</span><span class="r6">RAINBOW<em>SIX</em>SIEGE</span></div>
-      <nav>${['play', 'online', 'operators', 'shop'].map(p => `<button data-page="${p}" class="${active === p ? 'active' : ''}">${p.toUpperCase()}</button>`).join('')}</nav>
+      <nav>${['campaign', 'play', 'online', 'operators', 'shop'].map(p => `<button data-page="${p}" class="${active === p ? 'active' : ''}">${p.toUpperCase()}</button>`).join('')}</nav>
       <div class="right"><div class="wallet"><span class="cur">${icon('renown')}<span>${s.renown.toLocaleString()}</span></span><span class="cur">${icon('credits')}<span>${s.credits.toLocaleString()}</span></span></div><div class="avatar">${s.name.slice(0, 1).toUpperCase()}</div><button class="gear" data-action="settings" title="Settings">${icon('gear')}</button></div></div>
       <div class="subhead">${s.name.toUpperCase()}'S CUSTOM GAME</div>`;
   }
@@ -57,25 +57,30 @@ export class Menu {
     else if (p === 'operators') body += this.opsHTML();
     else if (p === 'shop') body += this.shopHTML();
     else if (p === 'online') body += this.onlineHTML();
+    else if (p === 'campaign') body += this.app.campaignUI.pageHTML();
     body += `<div class="bottom-hint"><span><b>ESC</b>BACK</span><span><b>ENTER</b>SELECT</span></div><div class="ver">R6 BROWSER · BUILD 1.0</div>`;
     this.el.innerHTML = body;
     this.bind();
-    this.app.menuScene && this.app.menuScene.setMode(p === 'operators' ? 'operator' : 'trio', this.selectedOp);
+    if (p === 'campaign') this.app.campaignUI.bind(this.el);
+    const featured = p === 'campaign' ? (this.app.campaignUI.state.selected && (this.app.campaignUI.selectedFeatured())) : null;
+    this.app.menuScene && this.app.menuScene.setMode(p === 'operators' || p === 'campaign' ? 'operator' : 'trio', featured || this.selectedOp);
   }
 
   homeHTML() {
     return `<div class="h1">HOME</div>
       <div class="tiles">
-        <button class="tile big" data-page="play"><span class="corner">${icon('corner')}</span>MATCHMAKING</button>
+        <button class="tile big" data-page="campaign"><span class="corner">${icon('corner')}</span>CAMPAIGN</button>
         <button class="tile sq" data-action="controls" title="Controls">${icon('controller')}</button>
         <button class="tile sq" data-page="operators" title="Operators">${icon('ops')}</button>
         <button class="tile sq" data-action="settings" title="Settings">${icon('gear')}</button>
         <button class="tile sq" data-action="stats" title="Career">${icon('cup')}</button>
-        <button class="tile wide" data-page="online"><small>PLAY</small>ONLINE</button>
-        <button class="tile news" data-page="play"><div class="ghost">SIEGE<br>BORDER</div><div class="plus">+</div></button>
+        <button class="tile wide" data-page="play"><small>CUSTOM</small>MATCH</button>
+        <button class="tile wide2" data-page="online"><small>PLAY</small>ONLINE</button>
+        <button class="tile news" data-page="campaign"><div class="ghost">OPERATION<br>KESTREL</div><div class="newsl"><small>CAMPAIGN</small>${this.campaignHint()}</div></button>
       </div>`;
   }
 
+  campaignHint() { const c = this.app.campaignUI.state; const done = Object.values(c.progress).filter(p => p.done).length; return done === 0 ? 'BEGIN THE OPERATION' : done >= 6 ? 'OPERATION COMPLETE' : 'MISSION ' + String(done + 1).padStart(2, '0') + ' AVAILABLE'; }
   playHTML() {
     const s = this.settings; const g = s.game;
     const seg = (key, opts) => `<div class="seg" data-seg="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${g[key] === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
@@ -164,6 +169,7 @@ export class Menu {
     const mp = E.querySelector('#map-preview'); if (mp) this.drawMapPreview(mp);
   }
   action(a) {
+    if (this.app.campaignUI.action(a)) return;
     if (a === 'start') this.app.startMatch();
     else if (a === 'host') { const n = this.el.querySelector('#on-name'); if (n) { this.settings.name = n.value || 'Host'; this.app.saveSettings(); } this.app.hostRoom(); }
     else if (a === 'join') { const n = this.el.querySelector('#on-name'), c = this.el.querySelector('#on-code'); if (n) { this.settings.name = n.value || 'Player'; this.app.saveSettings(); } this.app.joinRoom(c ? c.value : ''); }
@@ -309,11 +315,11 @@ export class OperatorSelect {
     const bots = this.app.game ? this.app.game.teamPreview(this.side) : [];
     this.el.innerHTML = `${this.menu.topbar('operators')}
       <div class="timerbar">${Math.ceil(this.timer)}<small>OPERATOR SELECT</small></div>
-      <div class="ops-left"><div class="ops-header">${this.side === 'atk' ? 'CHOOSE YOUR ATTACKER' : 'CHOOSE YOUR DEFENDER'}${M ? ` — ROUND ${M.round + 1}` : ''}</div>
+      <div class="ops-left"><div class="ops-header">${this.side === 'atk' ? 'CHOOSE YOUR ATTACKER' : 'CHOOSE YOUR DEFENDER'}${M ? (M.isCampaign ? ` — ${M.mission.code} · ${M.mission.name}` : ` — ROUND ${M.round + 1}`) : ''}</div>
         <div class="ops-cols"><div class="ops-col"><h4>${icon('atk')} ATTACKERS</h4>${grid('atk')}</div><div class="ops-col"><h4>${icon('def')} DEFENDERS</h4>${grid('def')}</div></div></div>
       ${this.menu.opPanelHTML(op)}
       <div class="ops-ai"><div class="team">YOUR TEAM &nbsp;${bots.map(b => `<div class="mini ${b.you ? 'you' : ''}" title="${b.name}">${icon(b.icon)}</div>`).join('')}</div></div>
-      <div class="ops-actions">${this.side === 'atk' ? `<button class="btn defuser-btn ${this.takeDefuser ? 'on' : ''}" data-action="defuser" title="Carry the defuser this round">${icon('defuser')}<span>${this.takeDefuser ? 'CARRYING THE DEFUSER' : 'PICK UP DEFUSER'}</span></button>` : ''}<button class="btn primary" data-action="ready">READY</button></div>`;
+      <div class="ops-actions">${this.side === 'atk' && !(M && M.isCampaign) ? `<button class="btn defuser-btn ${this.takeDefuser ? 'on' : ''}" data-action="defuser" title="Carry the defuser this round">${icon('defuser')}<span>${this.takeDefuser ? 'CARRYING THE DEFUSER' : 'PICK UP DEFUSER'}</span></button>` : ''}<button class="btn primary" data-action="ready">READY</button></div>`;
     this.el.querySelectorAll('[data-op]').forEach(b => b.addEventListener('click', () => { const o = OperatorById[b.dataset.op]; if (o.side !== this.side || this.taken.has(o.id)) return; AudioEngine.click('ui'); this.sel = o.id; this.render(); this.app.menuScene.setMode('operator', this.sel); }));
     this.el.querySelectorAll('[data-lo]').forEach(seg => seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { AudioEngine.click('ui'); this.menu.loadoutFor(this.sel)[seg.dataset.lo] = b.dataset.v; this.app.settings.loadouts = this.menu.loadouts; this.app.saveSettings(); this.render(); })));
     this.el.querySelector('[data-action=ready]').addEventListener('click', () => { AudioEngine.click('ui'); this.finish(); });

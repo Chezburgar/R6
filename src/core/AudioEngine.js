@@ -440,6 +440,17 @@ class AudioEngineClass {
     this._music = { gain, nodes };
   }
   bombTick(pos, urgency) { this.beep(pos, 1400 + urgency * 600, 0.05, 0.5); }
+  // radio squelch before a campaign subtitle: a short band-passed noise burst and a soft key-up tone
+  radio() {
+    if (!this.ready) return; const ctx = this.ctx; const t = ctx.currentTime;
+    const s = this._noiseSrc(); const bp = this._filter('bandpass', 2400, 3); const g = ctx.createGain(); s.connect(bp); bp.connect(g); g.connect(this.ui); this._env(g, t, 0.005, 0.12, 0.09); s.start(t); s.stop(t + 0.16);
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 1750; const og = ctx.createGain(); o.connect(og); og.connect(this.ui); this._env(og, t + 0.05, 0.005, 0.05, 0.06); o.start(t + 0.05); o.stop(t + 0.2);
+  }
+  // objective complete: two rising notes
+  objective() {
+    if (!this.ready) return; const ctx = this.ctx; const t0 = ctx.currentTime;
+    [660, 990].forEach((hz, i) => { const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = hz; const g = ctx.createGain(); o.connect(g); g.connect(this.ui); this._env(g, t0 + i * 0.12, 0.01, 0.14, 0.35); o.start(t0 + i * 0.12); o.stop(t0 + i * 0.12 + 0.5); });
+  }
   roundStinger(win) {
     if (!this.ready) return; const ctx = this.ctx; const t0 = ctx.currentTime;
     const notes = win ? [392, 523, 659, 784] : [392, 349, 311, 262];

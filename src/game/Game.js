@@ -24,11 +24,20 @@ import { Net } from '../net/Net.js';
 import { NetSync } from '../net/Sync.js';
 import { Character } from './Character.js';
 import { BARRICADE_BUILD_TIME } from '../map/Level.js';
+import { CampaignMatch } from '../campaign/CampaignMatch.js';
 
 // Match orchestrator: scene/lighting/post-processing, level lifecycle per round, players
 // and bots, interactions, event routing between systems, and the render loop.
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
+
+// Time of day presets (campaign missions): sun, sky dome, hemisphere fill, fog and exposure.
+const TIME_OF_DAY = {
+  day:   { sun: [40, 46, -26], sunI: 3.6, sunC: 0xfff0dc, hemiI: 0.75, hemiSky: 0xc4d8f0, hemiGnd: 0x6a5a48, bg: 0x9fb4c8, top: 0x4a78b8, mid: 0x9fb4c8, bot: 0xcdb9a0, glow: 1.6, env: 0.85, exposure: 0.92, fogK: 1.0, lights: 0 },
+  dawn:  { sun: [58, 11, 26], sunI: 2.3, sunC: 0xffc39a, hemiI: 0.5, hemiSky: 0xa9b6d6, hemiGnd: 0x5a4a40, bg: 0xd3ae98, top: 0x35558f, mid: 0xd0a08a, bot: 0xf0c9a2, glow: 2.4, env: 0.6, exposure: 0.88, fogK: 0.8, lights: 1 },
+  dusk:  { sun: [-52, 8, -16], sunI: 1.8, sunC: 0xff9a5c, hemiI: 0.4, hemiSky: 0x7f86b4, hemiGnd: 0x4a3a30, bg: 0xb0857a, top: 0x283670, mid: 0xad7a6a, bot: 0xe6a870, glow: 2.6, env: 0.5, exposure: 0.86, fogK: 0.7, lights: 2 },
+  night: { sun: [-30, 42, 30], sunI: 0.26, sunC: 0x9fb4ff, hemiI: 0.18, hemiSky: 0x2b3c64, hemiGnd: 0x121110, bg: 0x080b13, top: 0x03060e, mid: 0x0a101e, bot: 0x14171f, glow: 0.35, env: 0.18, exposure: 0.9, fogK: 0.55, lights: 4 },
+};
 
 class ViewModelPass extends Pass {
   constructor(scene, camera) { super(); this.scene = scene; this.camera = camera; this.needsSwap = false; this.clear = false; }
@@ -58,14 +67,16 @@ export class Game {
     this.ballistics = new Ballistics(this);
     this.gadgets = new GadgetManager(this);
     const preset = Presets[gameSettings.preset] || Presets.casual;
-    this.match = new Match(this, { ...preset, side: gameSettings.side, site: gameSettings.site, difficulty: gameSettings.difficulty });
+    this.campaign = gameSettings.campaign || null;
+    this.match = this.campaign ? new CampaignMatch(this, settings, this.campaign, gameSettings.difficulty) : new Match(this, { ...preset, side: gameSettings.side, site: gameSettings.site, difficulty: gameSettings.difficulty });
     this.difficulty = gameSettings.difficulty || 'normal';
     this.hud = new HUD(this, app.uiRoot);
     this._post();
     this.applyQuality();
     this.playerOp = null; this.playerLoadout = null;
-    this.stats = { kills: 0, deaths: 0, headshots: 0 };
+    this.stats = { kills: 0, deaths: 0, headshots: 0, shots: 0, hits: 0 };
     this.pings = [];   // contextual pings: { kind: 'yellow' | 'enemy', pos, t, label, by }
+    this.allies = []; this.enemies = []; this.extras = [];   // campaign roster groups
   }
 
   // ---------- scene setup ----------
@@ -82,10 +93,22 @@ export class Game {
     sun.shadow.bias = -0.00025; sun.shadow.normalBias = 0.02; sun.shadow.radius = 2;
     this.sun = sun;
     // sky dome
-    const sky = new THREE.Mesh(new THREE.SphereGeometry(230, 32, 16), new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false, uniforms: { top: { value: new THREE.Color(0x4a78b8) }, mid: { value: new THREE.Color(0x9fb4c8) }, bot: { value: new THREE.Color(0xcdb9a0) }, sunDir: { value: sun.position.clone().normalize() } },
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(230, 32, 16), new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false, uniforms: { top: { value: new THREE.Color(0x4a78b8) }, mid: { value: new THREE.Color(0x9fb4c8) }, bot: { value: new THREE.Color(0xcdb9a0) }, sunDir: { value: sun.position.clone().normalize() }, glow: { value: 1.6 } },
       vertexShader: `varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-      fragmentShader: `uniform vec3 top, mid, bot, sunDir; varying vec3 vP; void main(){ float h = vP.y; vec3 c = h > 0.0 ? mix(mid, top, pow(h, 0.55)) : mix(mid, bot, pow(-h, 0.7)); float s = pow(max(0.0, dot(vP, sunDir)), 300.0); c += vec3(1.0, 0.95, 0.85) * s * 1.6; c += vec3(1.0, 0.9, 0.7) * pow(max(0.0, dot(vP, sunDir)), 6.0) * 0.12; gl_FragColor = vec4(c, 1.0); }` }));
+      fragmentShader: `uniform vec3 top, mid, bot, sunDir; uniform float glow; varying vec3 vP; void main(){ float h = vP.y; vec3 c = h > 0.0 ? mix(mid, top, pow(h, 0.55)) : mix(mid, bot, pow(-h, 0.7)); float s = pow(max(0.0, dot(vP, sunDir)), 300.0); c += vec3(1.0, 0.95, 0.85) * s * glow; c += vec3(1.0, 0.9, 0.7) * pow(max(0.0, dot(vP, sunDir)), 6.0) * 0.075 * glow; gl_FragColor = vec4(c, 1.0); }` }));
     sky.name = 'sky'; s.add(sky); sky.material.toneMapped = false; sky.material.fog = false; this.sky = sky;
+    this.tod = TIME_OF_DAY.day;
+  }
+  // Campaign missions run at different hours: retune the sun, sky, fill light, fog and exposure.
+  setTimeOfDay(name) {
+    const t = this.tod = TIME_OF_DAY[name] || TIME_OF_DAY.day; const s = this.scene;
+    this.sun.position.set(t.sun[0], t.sun[1], t.sun[2]); this.sun.intensity = t.sunI; this.sun.color.setHex(t.sunC);
+    this.hemi.intensity = t.hemiI; this.hemi.color.setHex(t.hemiSky); this.hemi.groundColor.setHex(t.hemiGnd);
+    s.background.setHex(t.bg); s.fog.color.setHex(t.bg);
+    const u = this.sky.material.uniforms; u.top.value.setHex(t.top); u.mid.value.setHex(t.mid); u.bot.value.setHex(t.bot); u.sunDir.value.copy(this.sun.position).normalize(); u.glow.value = t.glow;
+    s.environmentIntensity = t.env; this.renderer.toneMappingExposure = t.exposure;
+    this.renderer.shadowMap.needsUpdate = true;
+    this.applyQuality();
   }
   _environment() {
     // PMREM from a small synthetic environment for PBR reflections
@@ -116,8 +139,9 @@ export class Game {
     const sz = perf ? 1024 : s.shadows === 'ultra' ? 4096 : s.shadows === 'high' ? 2048 : 1536;
     if (this.sun.shadow.mapSize.x !== sz) { this.sun.shadow.mapSize.set(sz, sz); if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; } }
     this.renderer.shadowMap.autoUpdate = false; this.renderer.shadowMap.needsUpdate = true; this._shadowEvery = perf ? 2 : 1;
-    this.lightBudget = perf ? 5 : s.quality === 'ultra' ? 10 : 8;
-    this.scene.fog.far = perf ? 150 : 220;
+    const tod = this.tod || TIME_OF_DAY.day;
+    this.lightBudget = (perf ? 5 : s.quality === 'ultra' ? 10 : 8) + tod.lights;   // dark hours lean on the interior lights
+    this.scene.fog.far = (perf ? 150 : 220) * tod.fogK;
     if (this.player && this.player.setScopeRes) this.player.setScopeRes(perf ? 640 : 1024);
   }
   // Compile every shader the round can need before the first frame so nothing stalls mid-fight.
@@ -211,7 +235,31 @@ export class Game {
     for (const [, g] of this.player.vmWeapons) apply(g.userData.inner);
     apply(this.player.char.tpWeapon);
   }
+  // Campaign roster: the player, scripted teammates, enemies and extras (hostage, high-value target).
+  // Bots may share operator bodies; each entry can override class, name, health and death rules.
+  setupTeamsCampaign(spec) {
+    for (const c of this.characters) this.scene.remove(c.root);
+    if (this.player) this.player.dispose();
+    this.characters = []; this.bots = [];
+    const side = spec.player.side; const enemySide = side === 'atk' ? 'def' : 'atk';
+    this.match.playerSide = side; this.playerOp = spec.player.op; this.playerLoadout = spec.player.loadout;
+    this.player = new Player(this, spec.player.op, side);
+    this._equip(this.player.char, spec.player.loadout, true);
+    this.characters.push(this.player.char); this.scene.add(this.player.char.root);
+    const mk = (e, s) => {
+      const Cls = e.cls || Bot; const b = new Cls(this, e.op, s, e.diff || 'normal', ...(e.args || [])); const ch = b.char;
+      if (e.loadout) this._equip(ch, e.loadout, false); else ch.setWeapons([]);
+      if (e.name) ch.name = e.name; if (e.health) { ch.maxHealth = e.health; ch.health = e.health; }
+      ch.noDBNO = !!e.noDBNO; ch.noTarget = !!e.noTarget; ch.campaignKind = e.kind || (s === side ? 'ally' : 'enemy');
+      this.bots.push(b); this.characters.push(ch); this.scene.add(ch.root); return b;
+    };
+    this.allies = spec.allies.map(e => mk(e, side));
+    this.enemies = spec.enemies.map(e => mk(e, enemySide));
+    this.extras = (spec.extras || []).map(e => mk(e, e.kind === 'hostage' ? side : enemySide));
+    this.hud.setOperator(spec.player.op);
+  }
   teamPreview(side) {
+    if (this.match.teamPreview) return this.match.teamPreview(side);
     const ids = Operators.filter(o => o.side === side);
     return ids.map(o => ({ name: o.name, icon: o.icon, you: this.playerOp && o.id === this.playerOp.id }));
   }
@@ -278,7 +326,8 @@ export class Game {
       return;
     }
     if (P.side !== 'atk' || C.dead || C.dbno) { if (P.usingDrone) this.exitDrone(); return; }
-    if (M.phase === 'prep') { if (P.drone && !P.usingDrone) { P.usingDrone = true; this.hud.drone(true); } if (Input.hit('droneExit')) this.hud.toast('OPERATORS DEPLOY WHEN THE ACTION PHASE STARTS', 1.6); return; }
+    // drone phase (and drone-only missions): the operator stays put
+    if (M.phase === 'prep' || M.lockDrone) { if (P.drone && !P.usingDrone) { P.usingDrone = true; this.hud.drone(true); } if (Input.hit('droneExit')) this.hud.toast(M.prepExitHint || 'OPERATORS DEPLOY WHEN THE ACTION PHASE STARTS', 1.6); return; }
     if (P.usingDrone) { if (Input.hit('droneExit')) { this.exitDrone(); this.audio.click('back'); } return; }
     if (P.interaction || P.rappel || P.vault) return;
     if (Input.hit('drone')) { if (P.drone && !P.drone.dead) { P.usingDrone = true; this.hud.drone(true); this.audio.click('ui'); } else if (P.dronesLeft > 0) this.deployDrone(); else this.hud.toast('NO DRONES LEFT', 1.5); }
@@ -304,12 +353,15 @@ export class Game {
     ch.pingedUntil = this.time + 3.5; ch.identifiedT = this.time; if (this.net && this.net.isHost) this.net.onIdentify(ch);
     this.audio.identify(); this.teamAlert(by.side, ch, ch.pos);
     if (by.isPlayer) this.hud.toast('IDENTIFIED — ' + ch.name, 1.8);
+    if (by.isPlayer && this.match.onIdentify) this.match.onIdentify(ch, by);
   }
 
   // ---------- interactions ----------
   getInteractions(C, camera, reach = 2.3) {
     const out = []; const M = this.match; const eye = camera.getWorldPosition(_v).clone(); const dir = camera.getWorldDirection(_v2).clone(); const say = (t) => { if (C.isPlayer) this.hud.toast(t); else if (this.net) this.net.toast(C, t); };
     if (C.dbno || C.dead) return out;
+    // mission objectives (campaign) come first
+    if (M.interactions) out.push(...M.interactions(C, eye, dir));
     // revive
     for (const t of this.characters) { if (t.side === C.side && t.dbno && !t.dead && t !== C && t.pos.distanceTo(C.pos) < 1.7) { out.push({ label: 'REVIVE ' + t.name, dur: 5, net: ['revive', t.nid], start: () => { t.reviver = C; }, done: () => { t.revive(); t.reviver = null; C.score += 50; }, cancel: () => { t.reviver = null; } }); break; } }
     // defuser
@@ -339,8 +391,10 @@ export class Game {
     if (killer && killer.isPlayer) { this.stats.kills++; if (headshot) this.stats.headshots++; this.hud.hitmarker(true, headshot); }
     victim.reviver = null;
     this.noise(victim, 12);
+    if (this.match.onDeath) this.match.onDeath(victim, killer, headshot);
   }
   onDBNO(victim, attacker) {
+    if (this.match.onDBNO) this.match.onDBNO(victim, attacker);
     if (this.net && this.net.isHost) this.net.onDBNO(victim, attacker, attacker && attacker.weapon ? attacker.weapon.def.name : '');
     this.hud.feed(attacker, { name: victim.name + ' (DOWNED)', side: victim.side }, attacker && attacker.weapon ? attacker.weapon.def.name : '', false);
     if (victim.hasDefuser) this.match.dropDefuser(victim);
@@ -349,8 +403,9 @@ export class Game {
     if (victim.bot) victim.bot.stop();
   }
   onRevived(ch) { if (ch.isPlayer) this.hud.toast('REVIVED'); if (this.net && this.net.isHost) this.net.onRevive(ch); }
-  onPlayerHit(target, zone, dmg) { this.hud.hitmarker(false, zone === 'head'); }
-  onPlayerShot(w) {}
+  onPlayerHit(target, zone, dmg) { this.stats.hits++; this.hud.hitmarker(false, zone === 'head'); }
+  onPlayerShot(w) { this.stats.shots++; }
+  onPlayerDamaged(attacker) { if (this.match.onPlayerDamaged) this.match.onPlayerDamaged(attacker); }
   teamAlert(side, enemy, pos) { for (const b of this.bots) if (b.char.side === side && !b.char.dead) b.callout(enemy, pos); }
   noise(source, loud) { if (!source) return; for (const b of this.bots) if (b.char.side !== source.side) b.hear(source.pos, loud); }
 
@@ -370,6 +425,8 @@ export class Game {
     if (this.paused || this.over) return;
     this.time += dt;
     const M = this.match; M.update(dt);
+    // intro fly-over (campaign): only the camera moves, but the light budget must still apply
+    if (M.cinematic) { this._cullLights(dt); this.effects.update(dt, this.camera); return; }
     if (M.phase === 'opselect' || M.phase === 'matchEnd') return;
     const P = this.player;
     // drone toggle
@@ -393,7 +450,7 @@ export class Game {
     this.audio.updateListener(this.camera.position, fwd, up); this.audio.interior = this.level.isInterior(this.camera.position);
     this._ambT = (this._ambT || 0) + dt; if (this._ambT > 1) { this._ambT = 0; this.audio.ambience(this.audio.interior); }
     this.hud.update(dt);
-    if (M.site) for (const b of M.site.bombs) if (b.device) { const on = Math.sin(this.time * 4 + (b.label === 'A' ? 0 : 1.5)) > 0.6; b.device.userData.led.material.emissiveIntensity = on ? 5 : 0.4; b.device.userData.light.intensity = on ? 1.6 : 0.15; }
+    if (M.site) for (const b of M.site.bombs) if (b.device && b.armed !== false) { const on = Math.sin(this.time * 4 + (b.label === 'A' ? 0 : 1.5)) > 0.6; b.device.userData.led.material.emissiveIntensity = on ? 5 : 0.4; b.device.userData.light.intensity = on ? 1.6 : 0.15; }
     // defuser led blink
     if (M.defuser) { const led = M.defuser.mesh.userData.led; if (led) led.material.emissiveIntensity = (Math.sin(this.time * (6 + (1 - M.timeLeft / M.s.bombTime) * 20)) > 0) ? 5 : 0.3; }
   }
@@ -430,7 +487,8 @@ export class Game {
   dispose() {
     for (const c of this.characters) this.scene.remove(c.root);
     if (this.player) { this.player.dispose(); if (this.player.drone) this.player.drone.dispose(); }
-    this.hud.root.remove(); this.audio.stopAmbience();
+    this.hud.dispose(); this.audio.stopAmbience();
+    this.renderer.toneMappingExposure = TIME_OF_DAY.day.exposure;
     this.composer.dispose && this.composer.dispose();
   }
 }

@@ -35,8 +35,11 @@ export class HUD {
         <div class="reticle" id="hud-drone-ret"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="22" class="ring"/><circle cx="32" cy="32" r="22" class="prog" id="hud-drone-prog"/><circle cx="32" cy="32" r="2" class="dot"/></svg><div class="hint" id="hud-drone-hint"></div></div>
         <div class="jam" id="hud-drone-jam">SIGNAL JAMMED</div></div>
       <div class="hud-spec" id="hud-spec" style="display:none"></div>
+      <div class="hud-objectives" id="hud-objectives" style="display:none"></div>
+      <div class="hud-subtitle" id="hud-subtitle" style="display:none"><b id="hud-sub-who"></b><span id="hud-sub-text"></span></div>
       <div id="scoreboard"></div>
     `;
+    this.uiRoot = root; this.titleEl = null;
     this.$ = id => h.querySelector('#' + id);
     this._cache = new Map();
     // DOM writes are the expensive part of the HUD: only touch a node when its content really changed
@@ -86,9 +89,37 @@ export class HUD {
     this.$('hud-drone-hint').textContent = d.jammed ? '' : d.hover ? (d.scanT > 0.05 ? 'IDENTIFYING' : 'HOLD X — IDENTIFY') : '';
     this.$('hud-drone-jam').style.opacity = d.jammed ? 1 : 0;
     if (d.isCam) { const cams = g.level.cameras; this.$('hud-drone').querySelector('.label').firstChild.textContent = 'CAM — ' + d.name; this.$('hud-drone-sub').textContent = 'CAMERAS ONLINE ' + cams.filter(c => c.alive).length + ' / ' + cams.length; this.$('hud-drone-bat').textContent = '5 — RETURN TO OPERATOR · Q / E — NEXT CAMERA · Z — PING'; }
-    else { this.$('hud-drone').querySelector('.label').firstChild.textContent = 'DRONE CAM'; this.$('hud-drone-sub').textContent = d.jammed ? 'NO SIGNAL' : 'SIGNAL OK · DRONES ' + P.dronesLeft; this.$('hud-drone-bat').textContent = (M.phase === 'prep' ? 'PREPARATION — LOCATE THE OBJECTIVE' : '5 — RETURN TO OPERATOR') + ' · Z — PING · SPACE — JUMP'; }
+    else { this.$('hud-drone').querySelector('.label').firstChild.textContent = 'DRONE CAM'; this.$('hud-drone-sub').textContent = d.jammed ? 'NO SIGNAL' : 'SIGNAL OK · DRONES ' + P.dronesLeft; this.$('hud-drone-bat').textContent = (M.droneHint || (M.phase === 'prep' ? 'PREPARATION — LOCATE THE OBJECTIVE' : '5 — RETURN TO OPERATOR')) + ' · Z — PING · SPACE — JUMP'; }
   }
   dbno(on) { this.$('hud-dbno').style.display = on ? 'block' : 'none'; }
+
+  // ---------- campaign ----------
+  // objective list (top left, under the compass): pending / active / done, with a counter when the objective has one
+  objectives(list) {
+    const e = this.$('hud-objectives'); if (!list) { e.style.display = 'none'; return; }
+    e.style.display = 'block';
+    this.setHTML(e, `<div class="h">OBJECTIVES</div>` + list.map(o => `<div class="o ${o.state}"><i></i><span>${o.text}</span>${o.count ? `<small>${Math.min(o.progress, o.count)} / ${o.count}</small>` : ''}</div>`).join(''));
+  }
+  objectiveDone(text) { this.toast('OBJECTIVE COMPLETE — ' + text.toUpperCase(), 3); }
+  // radio line at the bottom of the screen
+  subtitle(who, text) {
+    const e = this.$('hud-subtitle'); if (!who) { e.style.display = 'none'; return; }
+    e.style.display = 'flex'; this.$('hud-sub-who').textContent = who; this.$('hud-sub-text').textContent = text;
+  }
+  // mission title card over the intro fly-over (lives outside #hud so it shows while the HUD is hidden)
+  titleCard(code, name, sub) {
+    if (this.titleEl) { this.titleEl.remove(); this.titleEl = null; }
+    if (!code) return;
+    const t = el('div', 'titlecard', `<div class="code">${code}</div><div class="name">${name}</div><div class="sub">${sub}</div><div class="skip">CLICK OR SPACE — SKIP</div>`);
+    this.uiRoot.appendChild(t); this.titleEl = t; this.titleProgress(0);
+  }
+  // k = 0..1 through the intro: fade the card in, slide the lines in one after another, fade out at the end
+  titleProgress(k) {
+    const t = this.titleEl; if (!t) return;
+    t.style.opacity = k < 0.08 ? k / 0.08 : k > 0.86 ? Math.max(0, (1 - k) / 0.14) : 1;
+    t.querySelectorAll('.code, .name, .sub').forEach((e, i) => { const a = Math.max(0, Math.min(1, (k - 0.05 - i * 0.05) / 0.12)); const s = a * (2 - a); e.style.opacity = s; e.style.transform = `translateX(${(1 - s) * -24}px)`; });
+  }
+  dispose() { this.titleCard(null); this.root.remove(); }
   spectate(target) { const e = this.$('hud-spec'); if (!target) { e.style.display = 'none'; return; } e.style.display = 'block'; this.setHTML(e, `<small>SPECTATING</small>${target.name}<span>LMB / RMB — SWITCH TEAMMATE</span>`); }
   gadgetSlot(slot) { this.equippedSlot = slot; this.refreshGadgets(); }
 
@@ -109,15 +140,15 @@ export class HUD {
     const g = this.game; const M = g.match; const P = g.player; if (!P) return; const C = P.char;
     // timer
     const t = Math.max(0, M.timeLeft); const mm = Math.floor(t / 60), ss = Math.floor(t % 60);
-    const te = this.$('hud-timer'); const ts = M.phase === 'planted' ? t.toFixed(1) : `${mm}:${ss.toString().padStart(2, '0')}`; if (this._cache.get('timer') !== ts) { this._cache.set('timer', ts); te.firstChild.textContent = ts; }
-    this.setText(this.$('hud-timer-sub'), M.phase === 'prep' ? 'PREPARATION' : M.phase === 'planted' ? 'DEFUSER' : M.phase === 'action' ? 'ROUND ' + M.round : M.phase === 'roundEnd' ? 'ROUND OVER' : '');
-    te.className = 'hud-timer' + (M.phase === 'planted' ? ' crit' : t < 30 && M.phase === 'action' ? ' warn' : '');
+    const te = this.$('hud-timer'); const ts = M.phase === 'planted' || (M.countdown && t < 10) ? t.toFixed(1) : `${mm}:${ss.toString().padStart(2, '0')}`; if (this._cache.get('timer') !== ts) { this._cache.set('timer', ts); te.firstChild.textContent = ts; }
+    this.setText(this.$('hud-timer-sub'), M.isCampaign ? (M.phase === 'prep' && !M.countdown ? 'PREPARATION' : M.timerLabel) : M.phase === 'prep' ? 'PREPARATION' : M.phase === 'planted' ? 'DEFUSER' : M.phase === 'action' ? 'ROUND ' + M.round : M.phase === 'roundEnd' ? 'ROUND OVER' : '');
+    te.className = 'hud-timer' + (M.phase === 'planted' || (M.countdown && t < 30) ? ' crit' : (t < 30 && M.phase === 'action' && !M.isCampaign) || (M.countdown && t < 60) ? ' warn' : '');
     // teams
-    const atk = g.characters.filter(c => c.side === 'atk'), def = g.characters.filter(c => c.side === 'def');
+    const atk = g.characters.filter(c => c.side === 'atk' && !c.hidden && c.campaignKind !== 'hostage'), def = g.characters.filter(c => c.side === 'def' && !c.hidden);
     const left = M.playerSide === 'atk' ? atk : def, right = M.playerSide === 'atk' ? def : atk;
     const pips = arr => arr.map(c => `<i class="${c.dead ? 'dead' : c.dbno ? 'dbno' : ''} ${c.hasDefuser ? 'defuser' : ''}" title="${c.name}"></i>`).join('');
     const L = this.$('hud-teamL'), R = this.$('hud-teamR'); L.className = 'hud-team ' + M.playerSide; R.className = 'hud-team ' + (M.playerSide === 'atk' ? 'def' : 'atk'); this.setHTML(L, pips(left)); this.setHTML(R, pips(right));
-    this.setHTML(this.$('hud-score'), `<b>${M.score.A}</b> — <b>${M.score.B}</b>`);
+    this.setHTML(this.$('hud-score'), M.isCampaign ? '' : `<b>${M.score.A}</b> — <b>${M.score.B}</b>`);
     // health
     const hp = Math.max(0, C.health); this.$('hud-hp').style.width = (hp / C.maxHealth * 100) + '%'; this.$('hud-armor').style.width = C.armorPlate ? '100%' : '0'; this.$('hud-armor').style.opacity = C.armorPlate ? 0.35 : 0;
     this.setText(this.$('hud-hpnum'), C.dbno ? 'DOWNED' : `${Math.ceil(hp)} / ${C.maxHealth}` + (C.armorPlate ? ' + ARMOR' : ''));
@@ -158,19 +189,21 @@ export class HUD {
       m.children[1].textContent = label && label.length > 1 ? label : ''; m.children[2].textContent = dist !== undefined ? Math.round(dist) + 'm' : '';
       m.style.opacity = dist > 40 ? 0.5 : 1; used.add(key);
     };
-    if (M.site && (M.phase === 'action' || M.phase === 'prep' || M.phase === 'planted')) {
+    if (M.site && !M.isCampaign && (M.phase === 'action' || M.phase === 'prep' || M.phase === 'planted')) {
       if (!(M.phase === 'planted')) for (const b of M.site.bombs) { const p = b.pos.clone(); p.y += 1.0; place('site' + b.label, 'site', p, b.label, p.distanceTo(eye), M.phase === 'action'); }
       if (M.defuser) { const p = M.defuser.pos.clone(); p.y += 0.6; place('defuser', 'defuser', p, 'DEFUSER', p.distanceTo(eye), true); }
       if (M.defuserDropped && C.side === 'atk') { const p = M.defuserDropped.pos.clone(); p.y += 0.6; place('defuserD', 'defuser', p, 'DEFUSER', p.distanceTo(eye), true); }
     }
+    // mission objective markers (campaign)
+    if (M.markers) for (const mk of M.markers) place('obj:' + mk.key, mk.cls || 'obj', mk.pos, mk.label, mk.pos.distanceTo(eye), true);
     // contextual pings
     g.pings.forEach((pg, i) => { place('ping' + i, pg.kind === 'enemy' ? 'enemyping' : 'ping', pg.pos, pg.label, pg.pos.distanceTo(eye), true); });
     // the player's own drone when viewing from the operator
     if (P.drone && !P.usingDrone && P.side === 'atk') { const p = P.drone.pos.clone(); p.y += 0.4; place('mydrone', 'drone', p, 'DRONE', p.distanceTo(eye), false); }
     for (const ch of g.characters) {
-      if (ch === C || ch.dead) continue;
-      if (ch.side === C.side) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('ally' + ch.op.id, 'ally ' + ch.side + (ch.dbno ? ' dbno' : ''), p, ch.name + (ch.dbno ? ' — DOWNED' : ch.hasDefuser ? ' — DEFUSER' : ''), undefined, false); }
-      else if (ch.pingedUntil > g.time || (ch.scanned > g.time)) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('enemy' + ch.op.id, 'scan', p, ch.name, p.distanceTo(eye), true); }
+      if (ch === C || ch.dead || ch.hidden) continue;
+      if (ch.side === C.side) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('ally' + ch.uid, 'ally ' + ch.side + (ch.dbno ? ' dbno' : ''), p, ch.name + (ch.dbno ? ' — DOWNED' : ch.hasDefuser ? ' — DEFUSER' : ''), undefined, false); }
+      else if (ch.pingedUntil > g.time || (ch.scanned > g.time)) { const p = ch.headPos(new THREE.Vector3()); p.y += 0.35; place('enemy' + ch.uid, 'scan', p, ch.name, p.distanceTo(eye), true); }
     }
     for (const [k, m] of this.markers) if (!used.has(k)) m.style.display = 'none';
   }
@@ -179,7 +212,8 @@ export class HUD {
   _scoreboard() {
     const g = this.game; const M = g.match;
     const row = c => `<tr class="${c.isPlayer ? 'me' : ''} ${c.dead ? 'dead' : ''}"><td class="n">${c.name}${c.isPlayer ? ' (YOU)' : ''}</td><td>${c.op.ctu}</td><td>${c.kills}</td><td>${c.deaths}</td><td>${c.score}</td><td>${c.dead ? 'DEAD' : c.dbno ? 'DOWNED' : Math.ceil(c.health) + ' HP'}</td></tr>`;
-    const team = (side) => `<div class="th ${side}">${side === 'atk' ? 'ATTACKERS' : 'DEFENDERS'} — ${M.scoreFor(side)}</div><table><tr><th>OPERATOR</th><th>CTU</th><th>K</th><th>D</th><th>SCORE</th><th>STATUS</th></tr>${g.characters.filter(c => c.side === side).sort((a, b) => b.score - a.score).map(row).join('')}</table>`;
-    this.$('scoreboard').innerHTML = `<h2>BORDER — ${M.site ? M.site.name : ''}<small>ROUND ${M.round} · ${M.s.name}</small></h2>${team(M.playerSide)}${team(M.playerSide === 'atk' ? 'def' : 'atk')}`;
+    const label = side => M.isCampaign ? (side === M.playerSide ? 'RAINBOW' : 'WHITE MASKS') : (side === 'atk' ? 'ATTACKERS' : 'DEFENDERS') + ' — ' + M.scoreFor(side);
+    const team = (side) => `<div class="th ${side}">${label(side)}</div><table><tr><th>OPERATOR</th><th>CTU</th><th>K</th><th>D</th><th>SCORE</th><th>STATUS</th></tr>${g.characters.filter(c => c.side === side && !c.hidden).sort((a, b) => b.score - a.score).map(row).join('')}</table>`;
+    this.$('scoreboard').innerHTML = `<h2>BORDER — ${M.isCampaign ? M.mission.location : M.site ? M.site.name : ''}<small>${M.isCampaign ? M.mission.code + ' · ' + M.mission.name : 'ROUND ' + M.round + ' · ' + M.s.name}</small></h2>${team(M.playerSide)}${team(M.playerSide === 'atk' ? 'def' : 'atk')}`;
   }
 }

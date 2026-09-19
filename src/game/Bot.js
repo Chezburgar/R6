@@ -63,7 +63,7 @@ export class Bot {
     let best = null, bestD = Infinity;
     const fwd = C.forward(_v2);
     for (const e of g.characters) {
-      if (e.side === C.side || e.dead || e === C) continue;
+      if (e.side === C.side || e.dead || e === C || e.noTarget || e.hidden) continue;
       const d = e.pos.distanceTo(C.pos); if (d > this.D.vision) continue;
       // Siege pacing: defenders don't hunt attackers out on the road, attackers don't duel windows from 20 m out
       const meIn = g.level.isInterior(C.pos), themIn = g.level.isInterior(e.pos);

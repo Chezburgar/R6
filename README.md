@@ -1,7 +1,8 @@
 # Rainbow Six Siege — Browser
 
 A from-scratch browser recreation of Tom Clancy's Rainbow Six Siege (fan project), built with three.js and
-deployed as a static site on GitHub Pages. 5 attackers vs 5 defenders, Bomb mode on **Border**, against AI.
+deployed as a static site on GitHub Pages. 5 attackers vs 5 defenders, Bomb mode on **Border**, against AI —
+plus **Operation Kestrel**, a six-mission single-player campaign.
 
 **Play:** https://chezburgar.github.io/R6/
 
@@ -19,6 +20,26 @@ deployed as a static site on GitHub Pages. 5 attackers vs 5 defenders, Bomb mode
   breaching, planting, retakes, callouts, hearing, reaction time and settling accuracy by difficulty.
 - **Audio**: fully procedural — layered gunshots (crack / blast / thump / mechanical), distance filtering and delay,
   convolution reverb, footsteps by surface, reloads, explosions, gadgets and UI.
+
+## Campaign — Operation Kestrel
+Home → CAMPAIGN. A White Mask cell has seized Checkpoint 9, a customs station on a desert crossing, and is
+using it to move a chemical device across the frontier. Six linear missions, each a different mission type built
+on the match systems, with a briefing, an intro fly-over, radio chatter, an objective tracker and a debrief with
+a three-star rating (complete · under par time · mission bonus). Progress, stars and best times are saved;
+missions unlock in order. Difficulty (Recruit / Operator / Elite) shifts the AI one step either way.
+
+| # | Mission | Type | Time | Objective |
+|---|---------|------|------|-----------|
+| 01 | EYES ON | Recon (drone only) | Night | Identify the hostiles fortifying the station, locate the device, bring the drone home |
+| 02 | BREACH | Assault | Dawn | Breach the ground floor with Thatcher and Ash and clear seven hostiles |
+| 03 | HOLD THE LINE | Defence | Day | 45 s to fortify Customs, then repel three growing attack waves |
+| 04 | THE COURIER | High-value target | Dusk | Find the armoured courier moving between the upper-floor rooms, drop him, recover the detonator, exfil |
+| 05 | LAST CALL | Hostage rescue | Night | Locate, secure and escort the customs chief to the west parking lot — he follows you, don't get him shot |
+| 06 | DEVICE | Device disposal | Dawn | Five minutes to fight into the site and disable both canisters |
+
+Each mission has its own time of day (sun, sky, fog, exposure), a hand-picked featured operator (any operator of the
+side can be taken; scripted teammates fill in), AI teammates that move with you, and enemies that die outright like
+Terrorist Hunt targets. Pause offers RESTART / ABORT MISSION; the debrief offers NEXT MISSION / REPLAY / RETRY.
 
 ## Online
 Home → ONLINE. One player creates a room (5-letter code), friends join with the code; empty slots are filled with AI.
@@ -49,4 +70,5 @@ npx serve .
 
 ## Layout
 `src/core` engine (assets, input, audio, physics) · `src/map` Border + procedural materials + destruction ·
-`src/game` characters, player, bots, weapons, gadgets, match · `src/ui` menus + HUD · `assets/models` optimized GLBs.
+`src/game` characters, player, bots, weapons, gadgets, match · `src/campaign` story data, mission scripts, campaign AI and
+front-end · `src/ui` menus + HUD · `assets/models` optimized GLBs.

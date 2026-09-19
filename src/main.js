@@ -7,6 +7,8 @@ import { Game } from './game/Game.js';
 import { Operators, OperatorById } from './data/operators.js';
 import { getMaterial } from './map/Materials.js';
 import { Net } from './net/Net.js';
+import { CampaignUI } from './campaign/CampaignUI.js';
+import { MissionById } from './campaign/Story.js';
 
 const MANIFEST = {
   wpn_ar: 'assets/models/weapons/ar.glb', wpn_smg: 'assets/models/weapons/smg.glb', wpn_shotgun: 'assets/models/weapons/shotgun.glb', wpn_pistol: 'assets/models/weapons/pistol.glb',
@@ -14,11 +16,12 @@ const MANIFEST = {
   prop_drone: 'assets/models/props/drone.glb', prop_defuser: 'assets/models/props/defuser.glb',
   op_rook: 'assets/models/operators/rook.glb', op_frost: 'assets/models/operators/frost.glb', op_kapkan: 'assets/models/operators/kapkan.glb', op_bandit: 'assets/models/operators/bandit.glb',
 };
-const TIPS = ['Headshots are lethal regardless of health.', 'Reinforce walls during the preparation phase — you have 10 per team.', 'Soft walls can be shot through. Bullets lose damage with every surface they penetrate.', 'Hold F on a soft wall as a defender to reinforce it. Thermite burns through reinforcements.', 'Downed operators can be revived by teammates — finish them or cover the body.', 'Attackers can rappel exterior walls: press F facing a wall from outside.', 'Bandit\'s shock wire destroys Thermite charges on contact. Thatcher\'s EMP disables it.', 'Lean with Q and E to peek corners without exposing your body.', 'Press B to switch fire mode. Semi-auto is easier to control at range.', 'The defuser must be planted inside a bomb site. Defenders have 45 seconds to disable it.'];
+const TIPS = ['Headshots are lethal regardless of health.', 'Reinforce walls during the preparation phase — you have 10 per team.', 'Soft walls can be shot through. Bullets lose damage with every surface they penetrate.', 'Hold F on a soft wall as a defender to reinforce it. Thermite burns through reinforcements.', 'Downed operators can be revived by teammates — finish them or cover the body.', 'Attackers can rappel exterior walls: press F facing a wall from outside.', 'Bandit\'s shock wire destroys Thermite charges on contact. Thatcher\'s EMP disables it.', 'Lean with Q and E to peek corners without exposing your body.', 'Press B to switch fire mode. Semi-auto is easier to control at range.', 'The defuser must be planted inside a bomb site. Defenders have 45 seconds to disable it.', 'Campaign: your teammates move with you — lead them room by room.', 'Campaign: White Masks die outright; Rainbow operators can be downed and revived.', 'Campaign: the hostage follows whoever secured him. Keep him behind you.'];
 
 const DEFAULTS = {
   name: 'Operator', renown: 148560, credits: 1200, sens: 6, adsSens: 75, fov: 74, shadows: 'high', bloom: true, master: 0.8, sfx: 1, ui: 0.7, ambience: 0.6, music: 0.6, invertY: false, skin: 'default', quality: 'high', showFps: false,
   game: { preset: 'casual', side: 'atk', site: 'random', difficulty: 'normal' }, loadouts: {}, career: { matches: 0, wins: 0, kills: 0, deaths: 0, headshots: 0 },
+  campaign: { difficulty: 'normal', progress: {}, selected: 'eyes-on' },
 };
 
 class App {
@@ -33,13 +36,13 @@ class App {
     this.clock = new THREE.Clock(); this.game = null; this.mode = 'boot';
     window.addEventListener('resize', () => this.resize());
     Input.attach(this.canvas);
-    Input.onLockChange = (locked) => { if (!locked && this.game && this.mode === 'game' && !this.game.over && this.game.match.phase !== 'opselect' && this.game.match.phase !== 'roundEnd' && this.game.match.phase !== 'matchEnd') this.pause(true); };
+    Input.onLockChange = (locked) => { if (!locked && this.game && this.mode === 'game' && !this.game.over && this.game.match.phase !== 'opselect' && this.game.match.phase !== 'roundEnd' && this.game.match.phase !== 'matchEnd' && this.game.match.phase !== 'ended') this.pause(true); };
     // Chrome swallows the Escape keydown that exits pointer lock, other browsers deliver both: only act once
     window.addEventListener('keydown', e => { if (e.code === 'Escape' && performance.now() - Input.lastLockChange > 150) this.onEscape(); });
   }
   // render scale per preset: performance renders at 85% of CSS pixels, medium 1:1, high/ultra supersample on HiDPI screens
   pixelRatioFor(q) { return q === 'performance' ? Math.min(window.devicePixelRatio, 1) * 0.85 : q === 'ultra' ? Math.min(window.devicePixelRatio, 2) : q === 'high' ? Math.min(window.devicePixelRatio, 1.5) : Math.min(window.devicePixelRatio, 1); }
-  loadSettings() { try { const s = JSON.parse(localStorage.getItem('r6.settings') || '{}'); return { ...DEFAULTS, ...s, game: { ...DEFAULTS.game, ...(s.game || {}) }, career: { ...DEFAULTS.career, ...(s.career || {}) } }; } catch (e) { return { ...DEFAULTS }; } }
+  loadSettings() { try { const s = JSON.parse(localStorage.getItem('r6.settings') || '{}'); return { ...DEFAULTS, ...s, game: { ...DEFAULTS.game, ...(s.game || {}) }, career: { ...DEFAULTS.career, ...(s.career || {}) }, campaign: { ...DEFAULTS.campaign, ...(s.campaign || {}), progress: { ...((s.campaign && s.campaign.progress) || {}) } } }; } catch (e) { return { ...DEFAULTS }; } }
   saveSettings() { try { localStorage.setItem('r6.settings', JSON.stringify(this.settings)); } catch (e) {} this.applyAudioSettings(); }
   applyAudioSettings() { const s = this.settings; AudioEngine.setVolume('master', s.master); AudioEngine.setVolume('sfx', s.sfx); AudioEngine.setVolume('ui', s.ui); AudioEngine.setVolume('ambience', s.ambience); AudioEngine.setVolume('music', s.music === undefined ? 0.6 : s.music); }
 
@@ -54,6 +57,7 @@ class App {
     for (const m of ['concrete', 'plaster', 'plasterGreen', 'plasterBlue', 'drywall', 'wood', 'woodLight', 'plank', 'tile', 'tileDark', 'carpet', 'metal', 'asphalt', 'dirt', 'ceiling', 'roof', 'paper', 'fabric']) { getMaterial(m); }
     fill.style.width = '100%'; status.textContent = 'READY';
     this.menuScene = new MenuScene(this);
+    this.campaignUI = new CampaignUI(this);
     this.menu = new Menu(this, this.uiRoot);
     this.opSelect = new OperatorSelect(this, this.uiRoot, this.menu);
     const boot = document.getElementById('boot');
@@ -140,6 +144,32 @@ class App {
     this.settings.career.matches++; this.saveSettings();
     this.operatorSelectRound();
   }
+  // ---------- campaign ----------
+  startCampaignMission(id) {
+    const m = MissionById[id]; if (!m) return;
+    if (this.game) { this.game.dispose(); this.game = null; }
+    this.closeOverlay(); this.menu.hide(); AudioEngine.menuMusic(false);
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    this.game = new Game(this, this.settings, { preset: 'casual', side: m.side, site: m.site || 'random', difficulty: this.settings.campaign.difficulty, campaign: m });
+    this.game.resize(window.innerWidth, window.innerHeight);
+    this.mode = 'game';
+    const g = this.game;
+    g.hud.show(false); Input.unlock(); Input.wantLock = false; this.mode = 'opselect';
+    const c = this.settings.campaign; const prev = c.lastOp && c.lastOp[m.id]; const pick = prev && OperatorById[prev] && OperatorById[prev].side === m.side ? prev : m.featured;
+    this.opSelect.open(m.side, [], pick, (opId, loadout) => {
+      if (this.game !== g) return;
+      c.lastOp = c.lastOp || {}; c.lastOp[m.id] = opId; this.saveSettings();
+      g.match.startMission({ op: opId, loadout });
+      this.mode = 'game'; Input.wantLock = true; Input.lock();
+      this.showClickToPlay();
+    }, 60);
+  }
+  campaignEnd(result) {
+    if (!this.game) return;
+    this.settings.career.matches++; const c = this.settings.career; c.kills += result.kills; c.headshots += result.headshots; if (result.success) c.wins++;
+    Input.unlock(); Input.wantLock = false;
+    this.campaignUI.openDebrief(result);
+  }
   operatorSelectRound() {
     const g = this.game; const side = g.match.playerSide;
     g.hud.show(false); Input.unlock(); Input.wantLock = false;
@@ -180,13 +210,13 @@ class App {
     Input.unlock(); Input.wantLock = false;
     this.overlay(playerWon ? 'VICTORY' : 'DEFEAT', `<div class="grid"><div><div class="label">FINAL SCORE</div><div class="value">${M.score.A} — ${M.score.B}</div></div><div><div class="label">KILLS / DEATHS</div><div class="value">${stats.kills} / ${stats.deaths}</div></div><div><div class="label">HEADSHOTS</div><div class="value">${stats.headshots}</div></div><div><div class="label">RENOWN EARNED</div><div class="value">+${250 + stats.kills * 40 + (playerWon ? 300 : 0)}</div></div></div>`, [{ label: 'RETURN TO MENU', primary: true, fn: () => this.leaveMatch() }]);
   }
-  leaveMatch() {
+  leaveMatch(page = 'home') {
     if (this.game) { this.game.dispose(); this.game = null; }
     // every match-time popup goes: pause/settings/result overlays, round banners, click-to-play, toasts
     this.closeOverlay(); this.paused = false; this.opSelect && this.opSelect.close();
     for (const e of this.uiRoot.querySelectorAll('.overlay, .roundend, .toast')) e.remove();
     this._closeWait(); clearTimeout(this._readyTimer); if (Net.online) Net.leave();
-    Input.unlock(); Input.wantLock = false; this.mode = 'menu'; this.menu.showPage('home'); AudioEngine.menuMusic(true);
+    Input.unlock(); Input.wantLock = false; this.mode = 'menu'; this.menu.showPage(page); AudioEngine.menuMusic(true);
   }
 
   // ---------- pause / overlays ----------
@@ -199,8 +229,12 @@ class App {
     if (!this.game) return; this.paused = on; this.game.paused = on;
     if (on) {
       Input.unlock(); Input.wantLock = false;
-      this.overlay('PAUSED', `<div class="label">BORDER · ROUND ${this.game.match.round} · ${this.game.match.s.name}</div>`, [
-        { label: 'RESUME', primary: true, fn: () => this.pause(false) }, { label: 'SETTINGS', fn: () => { this.closeOverlay(); this.openSettings(() => this.pause(true)); } }, { label: 'CONTROLS', fn: () => { this.closeOverlay(); this.openControls(() => this.pause(true)); } }, { label: 'LEAVE MATCH', danger: true, fn: () => { this.closeOverlay(); this.leaveMatch(); } }]);
+      const M = this.game.match; const camp = M.isCampaign;
+      const label = camp ? `${M.mission.code} · ${M.mission.name} · ${M.mission.location}` : `BORDER · ROUND ${M.round} · ${M.s.name}`;
+      const acts = [{ label: 'RESUME', primary: true, fn: () => this.pause(false) }, { label: 'SETTINGS', fn: () => { this.closeOverlay(); this.openSettings(() => this.pause(true)); } }, { label: 'CONTROLS', fn: () => { this.closeOverlay(); this.openControls(() => this.pause(true)); } }];
+      if (camp) acts.push({ label: 'RESTART MISSION', fn: () => { this.closeOverlay(); const id = M.mission.id; this.leaveMatch('campaign'); this.startCampaignMission(id); } });
+      acts.push({ label: camp ? 'ABORT MISSION' : 'LEAVE MATCH', danger: true, fn: () => { this.closeOverlay(); this.leaveMatch(camp ? 'campaign' : 'home'); } });
+      this.overlay('PAUSED', `<div class="label">${label}</div>` + (camp ? `<div class="pause-obj">${M.objectives.map(o => `<div class="${o.state}">${o.text}</div>`).join('')}</div>` : ''), acts);
     } else { this.closeOverlay(); Input.wantLock = true; Input.lock(); if (!Input.locked) this.showClickToPlay(); }
   }
   overlay(title, html, actions = [{ label: 'CLOSE', primary: true, fn: () => this.closeOverlay() }]) {
